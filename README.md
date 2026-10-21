@@ -1,44 +1,52 @@
-# 图寻 AI 助手 / 图寻答案助手
+# 图寻答案助手（直接出答案）
 
-图寻（[tuxun.fun](https://tuxun.fun/)）的两个浏览器扩展，Windows / macOS 的 Chrome、Edge 都能用。
+图寻（[tuxun.fun](https://tuxun.fun/)）的浏览器扩展：直接显示当前街景**真实坐标**，给出国家/省份、可缩放小地图和中文判断线索。
 
-| 目录 | 是什么 |
-| --- | --- |
-| [`tuxun-ai-helper/`](tuxun-ai-helper/) | **完整版**：AI（DeepSeek）看街景猜位置、对战计分、AI 代打、直接出答案、自动打点、分步排除地图动画 |
-| [`tuxun-answer/`](tuxun-answer/) | **独立答案版（直接出答案）**：读取当前街景的真实坐标，显示国家/省份 + 经纬度，带可缩放小地图和中文线索库；**不含打点功能** |
+Windows / macOS 的 Chrome、Edge 都能用。
 
-## 安装（免构建）
+## 功能
+
+- **直接出答案**：国家 / 省份 + 经纬度（读取街景对象自带坐标，不是猜的）
+- **中国模式显示省份**：如「中国 · 辽宁省」
+- **可缩放小地图**：滚轮缩放、拖动平移、双击放大，点一下打开大图
+- **中文线索库**：覆盖世界地图全部 175 个国家（共 208 条，含港澳台/关岛/格陵兰等），按车牌/路桩/电线杆/建筑/植被/语言/区域/地貌分类
+- **通用口诀**：图寻 / Plonk It 的通用排除顺序
+- **复制坐标**
+
+> 不提供打点（自动选点）功能；不需要 AI、不需要 Key、不截图。
+
+## 安装
 
 1. 下载本仓库（Code → Download ZIP）并解压
-2. 打开 `edge://extensions/`（Chrome 是 `chrome://extensions`），开启右上角「开发人员模式 / Developer mode」
-3. 点「加载解压缩的扩展 / Load unpacked」，选择 `tuxun-ai-helper` 或 `tuxun-answer` 文件夹（能看到 `manifest.json` 的那一层）
-4. macOS 的 Chrome/Edge 步骤完全一样；不支持 Safari / Firefox
+2. 打开 `edge://extensions/`（Chrome 是 `chrome://extensions`），开启「开发人员模式」
+3. 点「加载解压缩的扩展」，选择本文件夹（能看到 `manifest.json` 的那一层）
+4. macOS 的 Chrome / Edge 步骤完全一样；不支持 Safari / Firefox
 
-## 快速使用
+## 使用
 
-- **完整版**：进游戏 → 点工具栏扩展图标（授权截图）→ 悬浮窗里点「让 DeepSeek 看图猜位置」；或在「设置」里填自己的 DeepSeek API Key（本仓库不含任何 Key）
-- **独立答案版**：进游戏后右侧小面板直接出答案（国家/省份 + 经纬度），可看小地图和中文线索库；1.17.0 起不再提供打点
+进游戏后右侧会出现「图寻答案」小面板：
 
-两个扩展互不冲突，可以同时装。
+- 直接显示国家 / 省份 + 经纬度
+- 小地图可缩放拖动核对位置
+- 展开「线索库」查看该国的判断技巧
+- 拖动标题栏可以移动面板
 
 ## 说明
 
-- 这是个人学习/研究用的工具，不保证长期可用；图寻改版后可能需要更新。
-- 「直接答案」类功能是读取游戏数据里的真实坐标，属于作弊性质；使用风险自负，请遵守图寻的规则。
-- 扩展不会把数据发往任何第三方服务器；完整版只把你截的图发给你自己配置的 DeepSeek API。
+- 读取街景坐标属于读取游戏数据，有作弊性质，风险自负。
+- 扩展不向任何第三方服务器发送数据。
 
-## 目录结构
+## 文件
 
 ```
-tuxun-ai-helper/   完整版扩展
-  manifest.json
-  src/             hook.js（页面主世界钩子）、content.js（悬浮窗）、background.js（截图 + AI 调用）、
-                   map-anim.js（地图动画）、world-data.js（国家数据）、geo-meta.js（线索库）
-  icons/
-tuxun-answer/      独立答案版扩展（v1.17.0 起不含打点）
-  manifest.json
-  src/             hook.js（读街景坐标）、answer.js（面板）、map-anim.js（瓦片地图）、
-                   world-data.js（国家数据）、extra-regions.js（港澳/关岛等）、
-                   cn-provinces.js（中国省界）、geo-meta.js + geo-meta-zh.js（线索库）
-  icons/
+manifest.json
+src/answer.js        面板（答案 / 小地图 / 线索库）
+src/hook.js          页面钩子（读取街景坐标）
+src/world-data.js    国家数据
+src/extra-regions.js 补充地区（港澳 / 关岛等）
+src/cn-provinces.js  中国省份边界
+src/geo-meta.js      英文线索库（兜底）
+src/geo-meta-zh.js   中文线索库（优先）
+src/map-anim.js      瓦片地图渲染
+icons/
 ```
