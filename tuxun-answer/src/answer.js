@@ -161,6 +161,14 @@
   .row { display: flex; gap: 8px; margin-top: 8px; }
   .kv { display: flex; justify-content: space-between; font-size: 11.5px; color: #b9c4d4; padding: 3px 0; }
   .hint { font-size: 11px; color: #8b96a6; margin-top: 7px; }
+  .clues { margin-top: 8px; border: 1px solid #ffffff14; border-radius: 10px; background: #0b1220; padding: 6px 8px; }
+  .clues summary { cursor: pointer; font-size: 12px; color: #ffb27a; list-style: none; }
+  .clues[open] summary { margin-bottom: 6px; }
+  .cluebox { max-height: 230px; overflow: auto; }
+  .clueg { margin-bottom: 7px; }
+  .cluetag { display: inline-block; font-size: 10px; color: #0b1220; background: #7dd3fc; border-radius: 6px; padding: 1px 6px; margin-bottom: 3px; }
+  .clueg ul { margin: 4px 0 0 14px; padding: 0; }
+  .clueg li { font-size: 11px; color: #c3ccdb; line-height: 1.45; margin-bottom: 3px; }
   .diag { font-size: 10px; line-height: 1.4; color: #93c5fd; background: #00000040; border-radius: 8px; padding: 6px 8px; margin-top: 7px; max-height: 130px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
   .notice { font-size: 11.5px; color: #6ee7b7; margin-top: 7px; word-break: break-all; }
   .notice.err { color: #fca5a5; }
@@ -228,6 +236,7 @@
           <button class="btn ghost" data-act="diag">诊断</button>
         </div>
         ${S.diagText ? `<pre class="diag">${esc(S.diagText)}</pre>` : ''}
+        ${metaHtml()}
         <div class="kv"><span>自动打点</span><span>${S.settings.autoPin ? '开' : '关'}</span></div>
         <div class="row">
           <button class="btn ghost" data-act="autopin">${S.settings.autoPin ? '关闭自动打点' : '开启自动打点'}</button>
@@ -667,6 +676,23 @@
     } catch (e) {}
   }
 
+  function metaHtml() {
+    const meta = self.__TX_GEO_META__;
+    if (!meta || !S.code) return '';
+    const c = meta.countries && meta.countries[S.code];
+    if (!c || !c.t || !c.t.length) return '';
+    const groups = c.t
+      .map((g) => {
+        const tips = (g.tips || []).slice(0, 4);
+        if (!tips.length) return '';
+        return '<div class="clueg"><div class="cluetag">' + esc(g.tag || '线索') + '</div><ul>' +
+          tips.map((t) => '<li>' + esc(t) + '</li>').join('') + '</ul></div>';
+      })
+      .join('');
+    return '<details class="clues" open><summary>📖 线索库 · ' + esc(c.z || c.n || S.country) +
+      ' 判断技巧（Plonk It 原文）</summary><div class="cluebox">' + groups + '</div></details>';
+  }
+
   async function placePin(silent) {
     if (!S.pos) {
       if (!silent) setNotice('还没有坐标', true);
@@ -732,6 +758,7 @@
     S.pos = st.position;
     const co = countryAt(S.pos.lat, S.pos.lng);
     S.country = co ? co.z : '未知';
+    S.code = co ? co.i : '';
     S.province = co && co.i === 'CN' ? provinceAt(S.pos.lat, S.pos.lng) : '';
     if (S.province) S.country += ' · ' + S.province;
     S.coords = `${S.pos.lat.toFixed(4)}, ${S.pos.lng.toFixed(4)}`;
