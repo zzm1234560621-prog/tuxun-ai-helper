@@ -238,6 +238,12 @@
 
     wrap.innerHTML = `<div class="panel" style="left:${p.x}px;top:${p.y}px">${head}<div class="bd">${body}</div></div>`;
     const mini = shadow.getElementById('txans-minimap');
+    if (mini && !mini.__txansRo) {
+      try {
+        mini.__txansRo = new ResizeObserver(() => scheduleDraw());
+        mini.__txansRo.observe(mini);
+      } catch (e) {}
+    }
     if (mini && S.pos) {
       attachMap(mini, openBigMap);
       if (!view.ready || view.key !== S.coords) centerOnAnswer();
@@ -245,6 +251,7 @@
       const kick = () => {
         tries += 1;
         try {
+          if (!view.ready) centerOnAnswer();
           drawMap(mini);
         } catch (e) {
           host.setAttribute('data-map', 'err:' + String((e && e.message) || e));
@@ -253,7 +260,7 @@
         if (dbg) {
           dbg.textContent =
             'map ready=' + view.ready + ' z=' + view.zoom.toFixed(1) + ' ok=' + view.ok + ' err=' + view.err +
-            ' anim=' + !!window.__TX_MAP_ANIM__ + ' w=' + mini.width + ' h=' + mini.height;
+            ' anim=' + !!window.__TX_MAP_ANIM__ + ' w=' + mini.width + ' h=' + mini.height + ' tpl=' + (function(){ try { const A = window.__TX_MAP_ANIM__; return A && A.debugInfo ? A.debugInfo().hasTemplate : '?'; } catch (e) { return '?'; } })();
         }
         if (tries < 24) setTimeout(kick, 250);
       };
@@ -343,13 +350,8 @@
     if (retryTimer) return;
     retryTimer = setInterval(() => {
       if (!view.ready) return;
-      if (view.ok > 0) {
-        clearInterval(retryTimer);
-        retryTimer = 0;
-        return;
-      }
-      scheduleDraw();
-    }, 1500);
+      if (view.ok === 0) scheduleDraw();
+    }, 2000);
   }
   let tileBudget = 12;
   let tileBudgetTs = 0;
@@ -748,6 +750,10 @@
     await loadAll();
     render();
     refresh();
+    // 刚进页面时图寻的地图/街景可能还没完全就绪：自动补几次刷新（等于手动点「刷新」）
+    setTimeout(() => refresh(), 700);
+    setTimeout(() => refresh(), 2000);
+    setTimeout(() => refresh(), 5000);
     setInterval(() => {
       if (S.enabled) refresh();
     }, 700);
