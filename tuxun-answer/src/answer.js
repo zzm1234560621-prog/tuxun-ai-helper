@@ -26,6 +26,7 @@
     notice: '',
     noticeErr: false,
     diagText: '',
+    tileFail: false,
     lastPanoId: null,
     autoPinned: {},
     busy: false,
@@ -187,6 +188,7 @@
         <div class="big">${esc(S.country || '未知')}</div>
         <div class="co" id="txans-coords">${S.coords}</div>
         <canvas id="txans-minimap" class="minimap" title="点一下打开大图；滚轮缩放、拖动平移"></canvas>
+        ${S.tileFail ? '<div class="hint" style="color:#fca5a5">地图瓦片没加载出来（网络/瓦片源不可用），点「诊断」看详情</div>' : ''}
         <div class="btns">
           <button class="btn" data-act="pin" ${S.busy ? 'disabled' : ''}>📍 打点</button>
           <button class="btn ghost" data-act="copy">复制</button>
@@ -264,7 +266,12 @@
     } else if (act === 'diag') {
       const d = await bridge('diag', {}, 4000);
       const mi = await bridge('map-info', {}, 4000);
-      S.diagText = JSON.stringify({ diag: d, mapInfo: mi }, null, 1).slice(0, 700);
+      let mm = null;
+      try {
+        const A = window.__TX_MAP_ANIM__;
+        mm = A && A.debugInfo ? A.debugInfo() : null;
+      } catch (e) {}
+      S.diagText = JSON.stringify({ diag: d, mapInfo: mi, map: mm, tiles: { ok: view.ok, err: view.err } }, null, 1).slice(0, 900);
       try {
         console.log('[图寻答案] 诊断', d, mi);
       } catch (e) {}
@@ -278,7 +285,7 @@
 
   /* ------------------------------ 可缩放地图 ------------------------------ */
   const TILE = 256;
-  const view = { lat: 0, lng: 0, zoom: 5, ready: false, key: '' };
+  const view = { lat: 0, lng: 0, zoom: 5, ready: false, key: '', ok: 0, err: 0 };
   const tileCache = new Map();
   let rafPending = false;
   let zoomAnim = null;
@@ -412,7 +419,7 @@
         }
         if (filled) continue;
         if (rec && rec.loading) continue;
-        if (rec && rec.err && Date.now() - rec.ts < 30000) continue;
+        if (rec && rec.err && Date.now() - rec.ts < 8000) continue;
         const nowTs = performance.now();
         if (nowTs - tileBudgetTs > 300) {
           tileBudgetTs = nowTs;
@@ -428,12 +435,22 @@
           item.ok = true;
           item.loading = false;
           item.img = img;
+          view.ok += 1;
+          if (S.tileFail) {
+            S.tileFail = false;
+            render();
+          }
           scheduleDraw();
         };
         img.onerror = () => {
           item.loading = false;
           item.err = true;
           item.ts = Date.now();
+          view.err += 1;
+          if (!S.tileFail && view.ok === 0 && view.err >= 8) {
+            S.tileFail = true;
+            render();
+          }
         };
         img.src = tileUrl(z, X, Y);
       }

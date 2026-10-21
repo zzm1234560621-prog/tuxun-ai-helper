@@ -37,20 +37,30 @@
 
   // 页面里图寻自己的地图会加载同源瓦片：直接沿用它当前的地址（key/版本变了也能跟上）
   let liveTemplate = null;
-  let liveChecked = false;
+  let lastScan = 0;
   let optsRef = null;
+  // 图寻的地图瓦片是陆续加载的：第一次扫描多半还没有，所以每 800ms 重新扫一次，直到找到
   function findLiveTemplate() {
-    if (liveChecked) return liveTemplate;
-    liveChecked = true;
+    if (liveTemplate) return liveTemplate;
+    const now = Date.now();
+    if (now - lastScan < 800) return null;
+    lastScan = now;
     try {
       const list = performance.getEntriesByType('resource');
       for (const e of list) {
         const u = (e && e.name) || '';
-        if (u.indexOf('getTile') < 0) continue;
+        if (!/getTile|maprastertile|dbankcdn/i.test(u)) continue;
         const m = /^(https?:\/\/[^?#]+?\/)(\d+)\/(\d+)\/(\d+)(\/\?.*)$/.exec(u);
         if (!m) continue;
-        if (!/scale=/.test(m[5])) continue;
-        liveTemplate = { base: m[1], q: m[5] };
+        let q = m[5];
+        if (!/[?&]scale=/.test(q)) q += '&scale=1';
+        liveTemplate = { base: m[1], q };
+        // 之前失败的瓦片允许重新请求
+        try {
+          for (const [k, v] of tileCache) {
+            if (v && v.err) tileCache.delete(k);
+          }
+        } catch (e2) {}
         break;
       }
     } catch (e) {}
@@ -385,7 +395,7 @@
   function create(canvas, opts) {
     opts = opts || {};
     optsRef = opts;
-    liveChecked = false;
+    lastScan = 0;
     liveTemplate = null;
     TILE_STATS.failNotified = false;
     const ctx = canvas.getContext('2d');
@@ -993,6 +1003,9 @@
     continentZh: (k) => CONTINENT_ZH[k] || k,
     countries: COUNTRIES,
     renderStatic,
+    debugInfo() {
+      return { template: liveTemplate ? liveTemplate.base : null, hasTemplate: !!liveTemplate };
+    },
     tileUrlFor,
     zoomForPoint,
     clearTiles() {
