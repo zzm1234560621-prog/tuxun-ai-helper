@@ -1,11 +1,11 @@
-﻿# 图寻 AI 助手 / 图寻答案助手
+# 图寻 AI 助手 / 图寻答案助手
 
 图寻（[tuxun.fun](https://tuxun.fun/)）的两个浏览器扩展，Windows / macOS 的 Chrome、Edge 都能用。
 
 | 目录 | 是什么 |
 | --- | --- |
-| [`tuxun-ai-helper/`](tuxun-ai-helper/) | **完整版**：AI（DeepSeek）看街景猜位置、对战计分、AI 代打、直接答案、分步排除地图动画 |
-| [`tuxun-answer/`](tuxun-answer/) | **独立答案版**：只读当前街景的真实坐标并显示国家，可缩放小地图 + 自动打点，不需要 AI |
+| [`tuxun-ai-helper/`](tuxun-ai-helper/) | **完整版**：AI（DeepSeek）看街景猜位置、对战计分、AI 代打、直接出答案、自动打点、分步排除地图动画 |
+| [`tuxun-answer/`](tuxun-answer/) | **独立答案版（直接出答案）**：读取当前街景的真实坐标，显示国家/省份 + 经纬度，带可缩放小地图和中文线索库；**不含打点功能** |
 
 ## 安装（免构建）
 
@@ -17,7 +17,7 @@
 ## 快速使用
 
 - **完整版**：进游戏 → 点工具栏扩展图标（授权截图）→ 悬浮窗里点「让 DeepSeek 看图猜位置」；或在「设置」里填自己的 DeepSeek API Key（本仓库不含任何 Key）
-- **独立答案版**：进游戏后右上角小面板直接显示国家 + 坐标，可一键打点
+- **独立答案版**：进游戏后右侧小面板直接出答案（国家/省份 + 经纬度），可看小地图和中文线索库；1.17.0 起不再提供打点
 
 两个扩展互不冲突，可以同时装。
 
@@ -35,8 +35,10 @@ tuxun-ai-helper/   完整版扩展
   src/             hook.js（页面主世界钩子）、content.js（悬浮窗）、background.js（截图 + AI 调用）、
                    map-anim.js（地图动画）、world-data.js（国家数据）、geo-meta.js（线索库）
   icons/
-tuxun-answer/      独立答案版扩展
+tuxun-answer/      独立答案版扩展（v1.17.0 起不含打点）
   manifest.json
-  src/             hook.js、answer.js（面板）、map-anim.js、world-data.js
+  src/             hook.js（读街景坐标）、answer.js（面板）、map-anim.js（瓦片地图）、
+                   world-data.js（国家数据）、extra-regions.js（港澳/关岛等）、
+                   cn-provinces.js（中国省界）、geo-meta.js + geo-meta-zh.js（线索库）
   icons/
 ```
