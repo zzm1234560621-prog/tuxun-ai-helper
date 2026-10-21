@@ -260,7 +260,7 @@
         if (dbg) {
           dbg.textContent =
             'map ready=' + view.ready + ' z=' + view.zoom.toFixed(1) + ' ok=' + view.ok + ' err=' + view.err +
-            ' anim=' + !!window.__TX_MAP_ANIM__ + ' w=' + mini.width + ' h=' + mini.height + ' tpl=' + (function(){ try { const A = window.__TX_MAP_ANIM__; return A && A.debugInfo ? A.debugInfo().hasTemplate : '?'; } catch (e) { return '?'; } })();
+            ' anim=' + !!window.__TX_MAP_ANIM__ + ' lok=' + levelOk + ' w=' + mini.width + ' h=' + mini.height + ' tpl=' + (function(){ try { const A = window.__TX_MAP_ANIM__; return A && A.debugInfo ? A.debugInfo().hasTemplate : '?'; } catch (e) { return '?'; } })();
         }
         if (tries < 24) setTimeout(kick, 250);
       };
@@ -373,7 +373,7 @@
   }
   function tileUrl(z, x, y) {
     const A = window.__TX_MAP_ANIM__;
-    return A && A.tileUrlFor ? A.tileUrlFor(z, x, y, 2) : '';
+    return A && A.tileUrlFor ? A.tileUrlFor(z, x, y, 1) : '';
   }
   function scheduleDraw() {
     if (rafPending) return;
@@ -423,6 +423,7 @@
     ctx.scale(scale, scale);
     ctx.translate(-vw / 2, -vh / 2);
 
+    let levelOk = 0;
     const nowTs = performance.now();
     if (nowTs - tileBudgetTs > 300) {
       tileBudgetTs = nowTs;
@@ -442,6 +443,7 @@
           try {
             ctx.drawImage(rec.img, dx, dy, TILE, TILE);
           } catch (e) {}
+          levelOk += 1;
           continue;
         }
         // 缺图：用更粗一级的缓存垫底
@@ -459,7 +461,7 @@
           filled = true;
           break;
         }
-        if (filled) continue;
+        // 注意：垫底只负责显示，仍然要继续请求当前层级的瓦片，否则放大后永远停在模糊的父级图
         if (rec && rec.loading) continue;
         if (rec && rec.err && Date.now() - rec.ts < 8000) continue;
         if (tileBudget <= 0) continue;
@@ -492,6 +494,26 @@
       }
     }
     ctx.restore();
+
+    // 当前层级完全没有图：1.5 秒后强制重扫瓦片地址并重试（避免一直用粗一级的模糊图）
+    if (levelOk === 0) {
+      const now2 = Date.now();
+      if (!view.levelRetryTs || now2 - view.levelRetryTs > 1500) {
+        view.levelRetryTs = now2;
+        setTimeout(() => {
+          try {
+            const A = window.__TX_MAP_ANIM__;
+            if (A && A.resetTemplate) A.resetTemplate();
+            for (const [k, v] of tileCache) {
+              if (v && v.err && k.indexOf(z + '/') === 0) tileCache.delete(k);
+            }
+          } catch (e) {}
+          scheduleDraw();
+        }, 1500);
+      }
+    } else {
+      view.levelRetryTs = 0;
+    }
 
     // 标记与文字在屏幕坐标系里画，大小不随缩放变化
     if (S.pos) {

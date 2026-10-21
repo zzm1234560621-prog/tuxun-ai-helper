@@ -1008,6 +1008,10 @@
     },
     tileUrlFor,
     zoomForPoint,
+    resetTemplate() {
+      liveTemplate = null;
+      lastScan = 0;
+    },
     clearTiles() {
       for (const [, rec] of tileCache) {
         if (rec && rec.img) {
