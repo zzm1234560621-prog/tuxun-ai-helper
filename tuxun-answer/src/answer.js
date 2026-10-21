@@ -66,6 +66,33 @@
   }
 
   /* ------------------------------ 工具 ------------------------------ */
+  function pointInRing(x, y, flat) {
+    let inside = false;
+    for (let i = 0, j = flat.length - 2; i < flat.length; j = i, i += 2) {
+      const xi = flat[i];
+      const yi = flat[i + 1];
+      const xj = flat[j];
+      const yj = flat[j + 1];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  // 中国模式：用省份边界反查具体省份
+  function provinceAt(lat, lng) {
+    const list = window.__TX_CN_PROVINCES__;
+    if (!Array.isArray(list) || !list.length) return '';
+    for (const p of list) {
+      const b = p.b;
+      if (!b) continue;
+      if (lng < b[0] || lng > b[2] || lat < b[1] || lat > b[3]) continue;
+      for (const ring of p.r || []) {
+        if (pointInRing(lng, lat, ring)) return p.n;
+      }
+    }
+    return '';
+  }
+
   function countryAt(lat, lng) {
     const list = (window.__TX_WORLD__ && window.__TX_WORLD__.countries) || [];
     let best = null;
@@ -645,6 +672,8 @@
     S.pos = st.position;
     const co = countryAt(S.pos.lat, S.pos.lng);
     S.country = co ? co.z : '未知';
+    S.province = co && co.i === 'CN' ? provinceAt(S.pos.lat, S.pos.lng) : '';
+    if (S.province) S.country += ' · ' + S.province;
     S.coords = `${S.pos.lat.toFixed(4)}, ${S.pos.lng.toFixed(4)}`;
     // 只在内容变化时重绘，避免轮询导致地图闪烁
     const uiKey = 'ok|' + S.country + '|' + S.coords;
