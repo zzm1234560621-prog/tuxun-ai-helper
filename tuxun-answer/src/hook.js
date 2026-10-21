@@ -517,6 +517,74 @@
     return { ok: false, reason: 'pick-api-error' };
   }
 
+  function scanFiberTree(pred, maxNodes) {
+    const roots = reactRoots();
+    if (!roots.length) return null;
+    const queue = roots.slice();
+    const seen = new Set();
+    let n = 0;
+    while (queue.length && n < maxNodes) {
+      const f = queue.shift();
+      if (!f || seen.has(f)) continue;
+      seen.add(f);
+      n += 1;
+      const cands = [];
+      try { if (f.stateNode) cands.push(f.stateNode); } catch (e) {}
+      try { if (f.memoizedProps) cands.push(f.memoizedProps); } catch (e) {}
+      for (const c of cands) {
+        if (!c || typeof c !== 'object') continue;
+        const kind = pred(c);
+        if (kind) return { val: c, kind, nodes: n };
+        try {
+          const ks = Object.keys(c);
+          for (let i = 0; i < Math.min(ks.length, 24); i++) {
+            const vv = c[ks[i]];
+            if (vv && typeof vv === 'object') {
+              const kk = pred(vv);
+              if (kk) return { val: vv, kind: kk, nodes: n };
+            }
+          }
+        } catch (e) {}
+      }
+      let hook = f.memoizedState;
+      let hi = 0;
+      while (hook && hi < 80) {
+        let st = null;
+        try { st = hook.memoizedState; } catch (e) {}
+        if (st && typeof st === 'object') {
+          const kind = pred(st) || pred(st.current);
+          if (kind) return { val: pred(st) ? st : st.current, kind, nodes: n };
+          try {
+            const ks = Object.keys(st);
+            for (let i = 0; i < Math.min(ks.length, 24); i++) {
+              const vv = st[ks[i]];
+              if (vv && typeof vv === 'object') {
+                const kk = pred(vv);
+                if (kk) return { val: vv, kind: kk, nodes: n };
+              }
+            }
+          } catch (e) {}
+        }
+        hook = hook.next;
+        hi += 1;
+      }
+      if (f.child) queue.push(f.child);
+      if (f.sibling) queue.push(f.sibling);
+      if (f.return) queue.push(f.return);
+    }
+    return null;
+  }
+
+  function guessMapReport() {
+    const hit = scanFiberTree(mapKindOf, 30000);
+    if (!hit) return { found: false };
+    const m = hit.val || {};
+    const methods = Object.keys(m).filter((k) => {
+      try { return typeof m[k] === 'function'; } catch (e) { return false; }
+    }).slice(0, 18);
+    return { found: true, kind: hit.kind, nodes: hit.nodes, methods };
+  }
+
   function findGuessMap() {
     if (mapState.map) {
       try {
@@ -525,6 +593,13 @@
       } catch (e) {
         mapState.map = null;
       }
+    }
+    const rootHit = scanFiberTree(mapKindOf, 30000);
+    if (rootHit) {
+      mapState.map = rootHit.val;
+      mapState.kind = rootHit.kind;
+      mapState.foundAt = Date.now();
+      return mapState;
     }
     const els = document.querySelectorAll('canvas, [class*="map"], [class*="Map"], [class*="leaflet"], [class*="maplibre"]');
     const seen = new Set();
@@ -620,6 +695,96 @@
   }
 
   // 方法 A：直接从 React 状态里找到「选中坐标」的 state，并 dispatch 新坐标
+  function scanHookStates(pred, maxNodes) {
+    const roots = reactRoots();
+    if (!roots.length) return [];
+    const out = [];
+    const queue = roots.slice();
+    const seen = new Set();
+    let n = 0;
+    while (queue.length && n < maxNodes) {
+      const f = queue.shift();
+      if (!f || seen.has(f)) continue;
+      seen.add(f);
+      n += 1;
+      let hook = f.memoizedState;
+      let hi = 0;
+      while (hook && hi < 80) {
+        let st = null;
+        try { st = hook.memoizedState; } catch (e) {}
+        if (st && typeof st === 'object') {
+          const got = pred(st);
+          if (got) out.push(got);
+          try {
+            const ks = Object.keys(st);
+            for (let i = 0; i < Math.min(ks.length, 24); i++) {
+              const vv = st[ks[i]];
+              if (vv && typeof vv === 'object') {
+                const g2 = pred(vv);
+                if (g2) out.push(g2);
+              }
+            }
+          } catch (e) {}
+        }
+        hook = hook.next;
+        hi += 1;
+      }
+      if (f.child) queue.push(f.child);
+      if (f.sibling) queue.push(f.sibling);
+      if (f.return) queue.push(f.return);
+    }
+    return out;
+  }
+
+  // 找「地图视图状态」：{center:{lat,lng} / center:[lng,lat] / lat,lng} + zoom/z
+  function findMapViewStates() {
+    return scanHookStates((st) => {
+      if (!st || typeof st !== 'object') return null;
+      const z = typeof st.zoom === 'number' ? st.zoom : typeof st.z === 'number' ? st.z : null;
+      if (z == null) return null;
+      let lat = null;
+      let lng = null;
+      const c = st.center || st.mapCenter || st.viewCenter;
+      if (c) {
+        if (typeof c.lat === 'number' && typeof c.lng === 'number') { lat = c.lat; lng = c.lng; }
+        else if (Array.isArray(c) && c.length >= 2) { lng = c[0]; lat = c[1]; }
+      }
+      if (lat == null && typeof st.lat === 'number' && typeof st.lng === 'number') { lat = st.lat; lng = st.lng; }
+      if (lat == null) return null;
+      return { lat, lng, zoom: z, keys: Object.keys(st).slice(0, 8) };
+    }, 30000);
+  }
+
+  function placeByViewState(targetLat, targetLng) {
+    const states = findMapViewStates();
+    if (!states.length) return { ok: false, reason: 'no-view-state' };
+    const hit = findMapCanvas();
+    if (!hit) return { ok: false, reason: 'no-canvas-view' };
+    const st = states[0];
+    const zoom = st.zoom;
+    const TILE = 256;
+    const size = TILE * Math.pow(2, zoom);
+    const tx = ((targetLng + 180) / 360) * size;
+    const ty = mercY(targetLat) * size;
+    const cx = ((st.lng + 180) / 360) * size;
+    const cy = mercY(st.lat) * size;
+    const r = hit.r;
+    const sx = r.left + r.width / 2 + (tx - cx);
+    const sy = r.top + r.height / 2 + (ty - cy);
+    if (!isFinite(sx) || !isFinite(sy)) return { ok: false, reason: 'bad-view-proj' };
+    if (sx < r.left || sx > r.right || sy < r.top || sy > r.bottom) return { ok: false, reason: 'target-offscreen' };
+    let target = null;
+    try { target = document.elementFromPoint(sx, sy); } catch (e) {}
+    if (!target) target = hit.c;
+    const opts = { bubbles: true, cancelable: true, clientX: sx, clientY: sy, view: window, button: 0 };
+    try {
+      ['mousedown', 'mouseup', 'click'].forEach((t) => target.dispatchEvent(new MouseEvent(t, opts)));
+    } catch (e) {
+      return { ok: false, reason: 'dispatch-fail' };
+    }
+    return { ok: true, kind: 'view-state-click', zoom, x: Math.round(sx), y: Math.round(sy), states: states.length };
+  }
+
   function placeByReactState(lat, lng) {
     const roots = reactRoots();
     if (!roots.length) return { ok: false, reason: 'no-react-root' };
@@ -765,6 +930,9 @@
     // 0) React 状态直写（最可靠，不依赖地图库）
     const byState = placeByReactState(lat, lng);
     if (byState.ok) return byState;
+    // 0.5) 用 React 里的地图视图状态（center/zoom）自己算屏幕坐标
+    const byView = placeByViewState(lat, lng);
+    if (byView.ok) return byView;
     // 1) 用可见瓦片推算屏幕坐标再点击
     const byTiles = placeByTiles(lat, lng);
     if (byTiles.ok) return byTiles;
@@ -988,6 +1156,9 @@
       iframeSrcs: Array.from(document.querySelectorAll('iframe')).slice(0, 5).map((f) => f.src || ''),
       canvases: document.querySelectorAll('canvas').length,
       canvas: cv,
+      viewStates: (function () {
+        try { return findMapViewStates().length; } catch (e) { return -1; }
+      })(),
       reactRoots: (function () { try { return reactRoots().length; } catch (e) { return -1; } })(),
       tileImgs: (function () {
         try {
@@ -1006,6 +1177,10 @@
       })(),
       guessMap: (function () {
         try {
+          const r = guessMapReport();
+          if (r.found) return r;
+        } catch (e) {}
+        try {
           const m = findGuessMap();
           if (!m) return { found: false };
           const mm = m.map || {};
@@ -1014,7 +1189,7 @@
         } catch (e) {
           return { found: false, error: String(e) };
         }
-      })()
+      })(),
     };
   }
 
