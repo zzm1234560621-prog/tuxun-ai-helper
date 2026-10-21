@@ -418,6 +418,7 @@
       if (mini) drawMap(mini);
       const big = shadow.getElementById('txans-bigmap');
       if (big && big.clientWidth) drawMap(big);
+      try { host.setAttribute('data-zoom', view.zoom.toFixed(2)); } catch (e) {}
     });
   }
 
@@ -630,7 +631,7 @@
     const A = window.__TX_MAP_ANIM__;
     view.zoom = clampZoom((A && A.zoomForPoint ? A.zoomForPoint(S.pos.lat, S.pos.lng) : 5) + 0.2);
     view.startTs = Date.now();
-    allowTiles = true;
+
     ensureRetry();
     scheduleDraw();
   }
@@ -685,7 +686,7 @@
     const info = modal.querySelector('#txans-mapinfo');
     if (info) info.textContent = (S.country || '') + ' ' + (S.coords || '');
     modal.classList.add('on');
-    allowTiles = true;
+
     centerOnAnswer();
     const big = shadow.getElementById('txans-bigmap');
     attachMap(big, null);
