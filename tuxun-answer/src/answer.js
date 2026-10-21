@@ -95,17 +95,34 @@
     return '';
   }
 
+  // 国家反查：先看外围大框，再用国界多边形精判（避免像菲律宾棉兰老岛那样落在主岛 bbox 外）
   function countryAt(lat, lng) {
     const list = (window.__TX_WORLD__ && window.__TX_WORLD__.countries) || [];
-    let best = null;
+    let ringHit = null;
+    let boxHit = null;
     for (const co of list) {
-      const b = co.mb || co.b;
+      const b = co.b;
       if (!b) continue;
       if (lng < b[0] || lng > b[2] || lat < b[1] || lat > b[3]) continue;
       const area = (b[2] - b[0]) * (b[3] - b[1]);
-      if (!best || area < best.area) best = { co, area };
+      let inside = false;
+      if (co.r && co.r.length) {
+        for (const ring of co.r) {
+          if (pointInRing(lng, lat, ring)) {
+            inside = true;
+            break;
+          }
+        }
+      }
+      if (inside) {
+        if (!ringHit || area < ringHit.area) ringHit = { co, area };
+      } else if (!boxHit || area < boxHit.area) {
+        boxHit = { co, area };
+      }
     }
-    return best ? best.co : null;
+    if (ringHit) return ringHit.co;
+    // 多边形没命中（海边/边界误差）时退回最小的外包框
+    return boxHit ? boxHit.co : null;
   }
 
   function esc(s) {
@@ -130,7 +147,7 @@
   const CSS = `
   :host { all: initial; }
   * { box-sizing: border-box; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
-  .panel { position: fixed; z-index: 2147483000; width: 258px; background: #101722f2; color: #e7edf7;
+  .panel { position: fixed; z-index: 2147483000; width: 258px; max-height: calc(100vh - 32px); display: flex; flex-direction: column; background: #101722f2; color: #e7edf7;
     border: 1px solid #ffffff1f; border-radius: 14px; box-shadow: 0 18px 44px #000000a0; backdrop-filter: blur(10px);
     font-size: 12.5px; line-height: 1.5; overflow: hidden; }
   .panel.min { width: 178px; }
@@ -142,7 +159,7 @@
   .hd .sub { font-size: 11px; color: #9aa4b2; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 96px; }
   .sp { flex: 1; }
   .hbtn { border: 0; background: #ffffff10; color: #cfd6e2; width: 20px; height: 20px; border-radius: 6px; cursor: pointer; font-size: 12px; line-height: 1; }
-  .bd { padding: 10px 12px 12px; }
+  .bd { padding: 10px 12px 12px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
   .big { font-size: 17px; font-weight: 700; color: #ffb27a; }
   .co { font-size: 11px; color: #9aa4b2; margin-top: 1px; word-break: break-all; }
   .minimap { display:block; width:100%; height:150px; margin-top:8px; border-radius:10px; border:1px solid #ffffff18; cursor:grab; background:#0a1424; touch-action:none; }
@@ -162,13 +179,16 @@
   .kv { display: flex; justify-content: space-between; font-size: 11.5px; color: #b9c4d4; padding: 3px 0; }
   .hint { font-size: 11px; color: #8b96a6; margin-top: 7px; }
   .clues { margin-top: 8px; border: 1px solid #ffffff14; border-radius: 10px; background: #0b1220; padding: 6px 8px; }
-  .clues summary { cursor: pointer; font-size: 12px; color: #ffb27a; list-style: none; }
+  .clues summary { cursor: pointer; font-size: 11.5px; color: #ffb27a; list-style: none; }
   .clues[open] summary { margin-bottom: 6px; }
-  .cluebox { max-height: 230px; overflow: auto; }
+  .cluebox { max-height: 180px; overflow: auto; }
   .clueg { margin-bottom: 7px; }
   .cluetag { display: inline-block; font-size: 10px; color: #0b1220; background: #7dd3fc; border-radius: 6px; padding: 1px 6px; margin-bottom: 3px; }
   .clueg ul { margin: 4px 0 0 14px; padding: 0; }
-  .clueg li { font-size: 11px; color: #c3ccdb; line-height: 1.45; margin-bottom: 3px; }
+  .clueg li { font-size: 10.5px; color: #c3ccdb; line-height: 1.45; margin-bottom: 3px; }
+  .cluet { font-size: 10.5px; color: #dbe4f0; line-height: 1.5; margin-bottom: 2px; }
+  .rulelist { margin: 2px 0 0 14px; padding: 0; }
+  .rulelist li { font-size: 10.5px; color: #c3ccdb; line-height: 1.45; margin-bottom: 3px; }
   .diag { font-size: 10px; line-height: 1.4; color: #93c5fd; background: #00000040; border-radius: 8px; padding: 6px 8px; margin-top: 7px; max-height: 130px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
   .notice { font-size: 11.5px; color: #6ee7b7; margin-top: 7px; word-break: break-all; }
   .notice.err { color: #fca5a5; }
@@ -236,7 +256,7 @@
           <button class="btn ghost" data-act="diag">诊断</button>
         </div>
         ${S.diagText ? `<pre class="diag">${esc(S.diagText)}</pre>` : ''}
-        ${metaHtml()}
+        ${metaHtmlZh() || metaHtml()}
         <div class="kv"><span>自动打点</span><span>${S.settings.autoPin ? '开' : '关'}</span></div>
         <div class="row">
           <button class="btn ghost" data-act="autopin">${S.settings.autoPin ? '关闭自动打点' : '开启自动打点'}</button>
@@ -281,27 +301,32 @@
   }
 
   /* ------------------------------ 交互 ------------------------------ */
-  function bindDrag() {
-    const el = shadow.getElementById('txans-drag');
+  let dragState = null;
+  wrap.addEventListener('pointerdown', (e) => {
+    const head = e.target && e.target.closest ? e.target.closest('#txans-drag') : null;
+    if (!head) return;
+    if (e.target.closest('[data-act]')) return;
     const panel = shadow.querySelector('.panel');
-    if (!el || !panel) return;
-    el.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('[data-act]')) return;
-      const start = { x: e.clientX, y: e.clientY };
-      const orig = { x: panel.offsetLeft, y: panel.offsetTop };
-      const move = (ev) => {
-        S.overlayPos = { x: Math.max(4, orig.x + ev.clientX - start.x), y: Math.max(4, orig.y + ev.clientY - start.y) };
-        panel.style.left = S.overlayPos.x + 'px';
-        panel.style.top = S.overlayPos.y + 'px';
-      };
-      const up = () => {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', up);
-      };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', up);
-    });
-  }
+    if (!panel) return;
+    dragState = { x: e.clientX, y: e.clientY, ox: panel.offsetLeft, oy: panel.offsetTop };
+    try { wrap.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault();
+  });
+  wrap.addEventListener('pointermove', (e) => {
+    if (!dragState) return;
+    const panel = shadow.querySelector('.panel');
+    if (!panel) return;
+    S.overlayPos = {
+      x: Math.max(4, dragState.ox + e.clientX - dragState.x),
+      y: Math.max(4, dragState.oy + e.clientY - dragState.y),
+    };
+    panel.style.left = S.overlayPos.x + 'px';
+    panel.style.top = S.overlayPos.y + 'px';
+  });
+  wrap.addEventListener('pointerup', () => { dragState = null; });
+  wrap.addEventListener('pointercancel', () => { dragState = null; });
+
+  function bindDrag() {}
 
   wrap.addEventListener('click', async (e) => {
     const el = e.target.closest('[data-act]');
@@ -676,6 +701,24 @@
     } catch (e) {}
   }
 
+  function metaHtmlZh() {
+    const zh = self.__TX_GEO_META_ZH__;
+    if (!zh || !zh.countries || !S.code) return '';
+    const c = zh.countries[S.code];
+    if (!c || !c.p || !c.p.length) return '';
+    const items = c.p
+      .slice(0, 6)
+      .map((p) => '<div class="clueg"><div class="cluetag">' + esc(p.k || '要点') + '</div><div class="cluet">' + esc(p.t || '') + '</div></div>')
+      .join('');
+    const rules = (zh.rules || []).slice(0, 6);
+    const rulesHtml = rules.length
+      ? '<details class="clues"><summary>📌 通用口诀（图寻/Plonk 综合）</summary><div class="cluebox"><ul class="rulelist">' +
+        rules.map((r) => '<li>' + esc(r) + '</li>').join('') + '</ul></div></details>'
+      : '';
+    return '<details class="clues"><summary>📖 线索库 · ' + esc(c.z || S.country) +
+      ' 判断技巧（中文精简）</summary><div class="cluebox">' + items + '</div></details>' + rulesHtml;
+  }
+
   function metaHtml() {
     const meta = self.__TX_GEO_META__;
     if (!meta || !S.code) return '';
@@ -689,7 +732,7 @@
           tips.map((t) => '<li>' + esc(t) + '</li>').join('') + '</ul></div>';
       })
       .join('');
-    return '<details class="clues" open><summary>📖 线索库 · ' + esc(c.z || c.n || S.country) +
+    return '<details class="clues"><summary>📖 线索库 · ' + esc(c.z || c.n || S.country) +
       ' 判断技巧（Plonk It 原文）</summary><div class="cluebox">' + groups + '</div></details>';
   }
 

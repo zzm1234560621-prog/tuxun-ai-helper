@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "图寻答案助手（直接出答案）",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "图寻专用：直接读取当前街景的真实坐标并显示国家，可一键在图寻地图上打点；不需要 AI、不需要网络请求。",
   "permissions": [
     "storage"
@@ -30,8 +30,10 @@
       ],
       "js": [
         "src/world-data.js",
+        "src/extra-regions.js",
         "src/cn-provinces.js",
         "src/geo-meta.js",
+        "src/geo-meta-zh.js",
         "src/map-anim.js",
         "src/answer.js"
       ],
