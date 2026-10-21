@@ -804,8 +804,10 @@
         try {
           st = hook.memoizedState;
         } catch (e) {}
-        if (st && typeof st === 'object' && typeof st.lat === 'number' && typeof st.lng === 'number' && Object.keys(st).length <= 6 && hook.queue && typeof hook.queue.dispatch === 'function') {
-          hits.push(hook);
+        if (st && typeof st === 'object' && Object.keys(st).length <= 6 && hook.queue && typeof hook.queue.dispatch === 'function') {
+          const lat = typeof st.lat === 'number' ? st.lat : typeof st.latitude === 'number' ? st.latitude : null;
+          const lng = typeof st.lng === 'number' ? st.lng : typeof st.longitude === 'number' ? st.longitude : null;
+          if (lat != null && lng != null) hits.push(hook);
         }
         hook = hook.next;
         hi += 1;
@@ -818,7 +820,11 @@
     for (const hook of hits) {
       try {
         const cur = hook.memoizedState;
-        const next = Object.assign({}, cur, { lat, lng });
+        const next = Object.assign({}, cur);
+        if (typeof cur.lat === 'number') next.lat = lat;
+        if (typeof cur.lng === 'number') next.lng = lng;
+        if (typeof cur.latitude === 'number') next.latitude = lat;
+        if (typeof cur.longitude === 'number') next.longitude = lng;
         hook.queue.dispatch(next);
         return { ok: true, kind: 'react-state', hits: hits.length };
       } catch (e) {}
@@ -926,16 +932,45 @@
     return { ok: true, kind: 'canvas-center', x: Math.round(cx), y: Math.round(cy), w: Math.round(r.width), h: Math.round(r.height) };
   }
 
+  function pickCoordMatches(lat, lng) {
+    try {
+      const coords = scanHookStates((st) => {
+        if (!st || typeof st !== 'object') return null;
+        const la = typeof st.lat === 'number' ? st.lat : typeof st.latitude === 'number' ? st.latitude : null;
+        const ln = typeof st.lng === 'number' ? st.lng : typeof st.longitude === 'number' ? st.longitude : null;
+        if (la == null || ln == null) return null;
+        if (Object.keys(st).length > 6) return null;
+        return { lat: la, lng: ln };
+      }, 30000);
+      return coords.some((c) => Math.abs(c.lat - lat) < 0.05 && Math.abs(c.lng - lng) < 0.05);
+    } catch (e) {
+      return false;
+    }
+  }
+
   function placeGuess(lat, lng) {
-    // 0) React 状态直写（最可靠，不依赖地图库）
-    const byState = placeByReactState(lat, lng);
-    if (byState.ok) return byState;
-    // 0.5) 用 React 里的地图视图状态（center/zoom）自己算屏幕坐标
-    const byView = placeByViewState(lat, lng);
-    if (byView.ok) return byView;
-    // 1) 用可见瓦片推算屏幕坐标再点击
-    const byTiles = placeByTiles(lat, lng);
-    if (byTiles.ok) return byTiles;
+    const tried = [];
+    const tryOne = (name, fn) => {
+      let r = null;
+      try {
+        r = fn();
+      } catch (e) {
+        return null;
+      }
+      if (!r || !r.ok) return null;
+      r.method = name;
+      tried.push(name);
+      // 关键：读回坐标验证，只有落在目标附近才算成功
+      if (pickCoordMatches(lat, lng)) return Object.assign({}, r, { verified: true });
+      return null;
+    };
+    let hit = tryOne('react-state', () => placeByReactState(lat, lng));
+    if (hit) return hit;
+    hit = tryOne('view-state', () => placeByViewState(lat, lng));
+    if (hit) return hit;
+    hit = tryOne('tile-click', () => placeByTiles(lat, lng));
+    if (hit) return hit;
+    mapState.tried = tried;
     const found = findGuessMap();
     if (!found) {
       const byApi = placeByPickApi(lat, lng);
@@ -1055,7 +1090,7 @@
         }
         return { ok: true, kind: 'google', moved: true };
       }
-      return { ok: false, error: 'unsupported-map' };
+      return { ok: false, error: 'unsupported-map', tried };
     } catch (e) {
       return { ok: false, error: String(e && e.message ? e.message : e) };
     }
@@ -1156,6 +1191,16 @@
       iframeSrcs: Array.from(document.querySelectorAll('iframe')).slice(0, 5).map((f) => f.src || ''),
       canvases: document.querySelectorAll('canvas').length,
       canvas: cv,
+      pickStates: (function () {
+        try {
+          return scanHookStates((st) => {
+            if (!st || typeof st !== 'object' || Object.keys(st).length > 6) return null;
+            const la = typeof st.lat === 'number' ? st.lat : typeof st.latitude === 'number' ? st.latitude : null;
+            const ln = typeof st.lng === 'number' ? st.lng : typeof st.longitude === 'number' ? st.longitude : null;
+            return la != null && ln != null ? st : null;
+          }, 30000).length;
+        } catch (e) { return -1; }
+      })(),
       viewStates: (function () {
         try { return findMapViewStates().length; } catch (e) { return -1; }
       })(),
