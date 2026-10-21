@@ -16,6 +16,8 @@
     pos: null,
   };
 
+  const VERSION = (() => { try { return chrome.runtime.getManifest().version; } catch (e) { return '?'; } })();
+
   const S = {
     settings: Object.assign({}, DEFAULTS),
     collapsed: false,
@@ -230,7 +232,7 @@
           <button class="btn ghost" data-act="autopin">${S.settings.autoPin ? '关闭自动打点' : '开启自动打点'}</button>
         </div>
         ${notice}
-        <div class="hint">直接读街景对象的真实坐标，不经过 AI。拖动标题可移动。</div>`
+        <div class="hint">直接读街景对象的真实坐标，不经过 AI。拖动标题可移动。<span class="muted">v${VERSION}</span></div>`
       : `<div class="muted">进入一局游戏、等街景加载后，这里会直接显示答案。</div>${notice}`;
 
     wrap.innerHTML = `<div class="panel" style="left:${p.x}px;top:${p.y}px">${head}<div class="bd">${body}</div></div>`;
@@ -238,7 +240,16 @@
     if (mini && S.pos) {
       attachMap(mini, openBigMap);
       if (!view.ready || view.key !== S.coords) centerOnAnswer();
-      setTimeout(() => drawMap(mini), 20);
+      setTimeout(() => {
+        try {
+          drawMap(mini);
+          host.setAttribute('data-map', 'drawn w=' + mini.width + ' h=' + mini.height + ' ok=' + view.ok + ' err=' + view.err + ' z=' + view.zoom.toFixed(1));
+        } catch (e) {
+          host.setAttribute('data-map', 'err:' + String((e && e.message) || e));
+        }
+      }, 20);
+    } else {
+      host.setAttribute('data-map', 'no-mini pos=' + !!S.pos);
     }
     bindDrag();
   }
@@ -516,10 +527,11 @@
       }
     }
     if (view.ok === 0) {
-      ctx.fillStyle = '#7d8898aa';
+      const elapsed = Date.now() - (view.startTs || 0);
       ctx.font = '12px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('地图加载中…', w / 2, h / 2 + 4);
+      ctx.fillStyle = elapsed > 5000 ? '#fca5a5cc' : '#7d8898aa';
+      ctx.fillText(elapsed > 5000 ? '瓦片未加载，点「诊断」' : '地图加载中…', w / 2, h / 2 + 4);
       ctx.textAlign = 'left';
     }
     ctx.fillStyle = '#ffffffaa';
@@ -575,6 +587,7 @@
     view.key = S.coords;
     const A = window.__TX_MAP_ANIM__;
     view.zoom = clampZoom((A && A.zoomForPoint ? A.zoomForPoint(S.pos.lat, S.pos.lng) : 5) + 0.2);
+    view.startTs = Date.now();
     allowTiles = true;
     ensureRetry();
     scheduleDraw();
@@ -678,16 +691,33 @@
   }
 
   async function refresh() {
+    S.dbg = S.dbg || { calls: 0, ok: 0, fail: 0, last: '' };
+    S.dbg.calls += 1;
     const st = await bridge('state', {}, 2500);
     S.lastState = st;
+    if (st && st.ok) {
+      S.dbg.ok += 1;
+      S.failStreak = 0;
+    } else {
+      S.dbg.fail += 1;
+      S.failStreak = (S.failStreak || 0) + 1;
+      S.dbg.last = JSON.stringify(st);
+    }
+    if (S.dbg.calls % 10 === 0) {
+      try {
+        host.setAttribute('data-dbg', 'calls=' + S.dbg.calls + ' ok=' + S.dbg.ok + ' fail=' + S.dbg.fail + ' last=' + S.dbg.last);
+      } catch (e) {}
+    }
     if (!st || !st.ok || !st.position) {
-      S.pos = null;
-      S.country = '';
-      S.coords = '';
-      const k0 = 'none';
-      if (k0 !== S.uiKey) {
-        S.uiKey = k0;
-        render();
+      if ((S.failStreak || 0) >= 3) {
+        S.pos = null;
+        S.country = '';
+        S.coords = '';
+        const k0 = 'none';
+        if (k0 !== S.uiKey) {
+          S.uiKey = k0;
+          render();
+        }
       }
       return;
     }
