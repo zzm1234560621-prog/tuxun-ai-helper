@@ -388,38 +388,51 @@
     }
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
     ctx.fillStyle = '#0a1424';
     ctx.fillRect(0, 0, w, h);
 
-    const zf = view.zoom;
-    const z = Math.floor(zf);
-    const ts = TILE * Math.pow(2, zf - z); // 这一级瓦片在屏幕上的像素大小
-    const c = proj(view.lat, view.lng, zf);
-    const tx = Math.floor(c.x / ts);
-    const ty = Math.floor(c.y / ts);
-    const offX = w / 2 - (c.x - tx * ts);
-    const offY = h / 2 - (c.y - ty * ts);
-    const halfC = Math.ceil(w / ts / 2) + 1;
-    const halfR = Math.ceil(h / ts / 2) + 1;
-    const maxY = Math.pow(2, z);
-    let newTiles = 0;
+    // 整数级别瓦片 + 整体缩放：所有瓦片同一比例，避免接缝/字号不一致
+    const zoomF = Math.max(1, Math.min(16, view.zoom));
+    const z = Math.max(1, Math.min(16, Math.round(zoomF)));
+    const scale = Math.pow(2, zoomF - z);
+    const vw = w / scale;
+    const vh = h / scale;
+    const c = proj(view.lat, view.lng, z);
+    const tx = Math.floor((c.x - vw / 2) / TILE);
+    const ty = Math.floor((c.y - vh / 2) / TILE);
+    const offX = -((c.x - vw / 2) - tx * TILE);
+    const offY = -((c.y - vh / 2) - ty * TILE);
+    const cols = Math.ceil(vw / TILE) + 1;
+    const rows = Math.ceil(vh / TILE) + 1;
+    const maxTile = Math.pow(2, z);
 
-    for (let dy = -halfR; dy <= halfR; dy++) {
-      for (let dx = -halfC; dx <= halfC; dx++) {
-        const X = tx + dx;
-        const Y = ty + dy;
-        if (Y < 0 || Y >= maxY) continue;
+    ctx.save();
+    ctx.translate(w / 2, h / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-vw / 2, -vh / 2);
+
+    const nowTs = performance.now();
+    if (nowTs - tileBudgetTs > 300) {
+      tileBudgetTs = nowTs;
+      tileBudget = 12;
+    }
+
+    for (let j = 0; j <= rows; j++) {
+      for (let i = 0; i <= cols; i++) {
+        const X = tx + i;
+        const Y = ty + j;
+        if (Y < 0 || Y >= maxTile) continue;
         const key = z + '/' + X + '/' + Y;
         const rec = tileCache.get(key);
+        const dx = i * TILE + offX;
+        const dy = j * TILE + offY;
         if (rec && rec.ok && rec.img) {
           try {
-            ctx.drawImage(rec.img, (X - tx) * ts + offX, (Y - ty) * ts + offY, ts, ts);
+            ctx.drawImage(rec.img, dx, dy, TILE, TILE);
           } catch (e) {}
           continue;
         }
-        // 没有这一级：往上找 1~3 级缓存先垫上，避免缩放时出现黑块
+        // 缺图：用更粗一级的缓存垫底
         let filled = false;
         for (let lv = z - 1; lv >= Math.max(1, z - 3); lv--) {
           const p = Math.pow(2, z - lv);
@@ -429,57 +442,16 @@
           if (!pr || !pr.ok || !pr.img) continue;
           const sub = 256 / p;
           try {
-            ctx.drawImage(
-              pr.img,
-              (X - px * p) * sub,
-              (Y - py * p) * sub,
-              sub,
-              sub,
-              (X - tx) * ts + offX,
-              (Y - ty) * ts + offY,
-              ts,
-              ts,
-            );
+            ctx.drawImage(pr.img, (X - px * p) * sub, (Y - py * p) * sub, sub, sub, dx, dy, TILE, TILE);
           } catch (e) {}
           filled = true;
           break;
         }
-        // 缩小方向：用下一级（更细）的 4 块缓存拼回来
-        if (!filled) {
-          let got = 0;
-          for (let cy = 0; cy < 2; cy++) {
-            for (let cx = 0; cx < 2; cx++) {
-              const cr = tileCache.get(z + 1 + '/' + (X * 2 + cx) + '/' + (Y * 2 + cy));
-              if (!cr || !cr.ok || !cr.img) continue;
-              try {
-                ctx.drawImage(
-                  cr.img,
-                  0,
-                  0,
-                  256,
-                  256,
-                  (X - tx) * ts + offX + (cx * ts) / 2,
-                  (Y - ty) * ts + offY + (cy * ts) / 2,
-                  ts / 2,
-                  ts / 2,
-                );
-                got += 1;
-              } catch (e) {}
-            }
-          }
-          if (got === 4) filled = true;
-        }
         if (filled) continue;
         if (rec && rec.loading) continue;
         if (rec && rec.err && Date.now() - rec.ts < 8000) continue;
-        const nowTs = performance.now();
-        if (nowTs - tileBudgetTs > 300) {
-          tileBudgetTs = nowTs;
-          tileBudget = 12;
-        }
         if (tileBudget <= 0) continue;
         tileBudget -= 1;
-        newTiles += 1;
         const item = { loading: true, ok: false, err: false, img: null, ts: Date.now() };
         tileCache.set(key, item);
         const img = new Image();
@@ -507,11 +479,13 @@
         img.src = tileUrl(z, X, Y);
       }
     }
+    ctx.restore();
 
+    // 标记与文字在屏幕坐标系里画，大小不随缩放变化
     if (S.pos) {
-      const ap = proj(S.pos.lat, S.pos.lng, zf);
-      const mx = ap.x - c.x + w / 2;
-      const my = ap.y - c.y + h / 2;
+      const ap = proj(S.pos.lat, S.pos.lng, z);
+      const mx = w / 2 + (ap.x - c.x) * scale;
+      const my = h / 2 + (ap.y - c.y) * scale;
       if (mx > -20 && my > -20 && mx < w + 20 && my < h + 20) {
         ctx.beginPath();
         ctx.arc(mx, my, 12, 0, Math.PI * 2);
@@ -536,7 +510,7 @@
     }
     ctx.fillStyle = '#ffffffaa';
     ctx.font = '10px sans-serif';
-    ctx.fillText('z' + zf.toFixed(1), 6, h - 6);
+    ctx.fillText('z' + zoomF.toFixed(1), 6, h - 6);
   }
 
   function clampZoom(z) {
