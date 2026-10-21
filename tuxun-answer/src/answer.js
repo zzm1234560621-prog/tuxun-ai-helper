@@ -281,19 +281,10 @@
   const view = { lat: 0, lng: 0, zoom: 5, ready: false, key: '' };
   const tileCache = new Map();
   let rafPending = false;
-  let allowTiles = true;
-  let tileKickTimer = 0;
   let zoomAnim = null;
-  const MAX_NEW_TILES_PER_DRAW = 4;
+  let tileBudget = 12;
+  let tileBudgetTs = 0;
 
-  function pauseTiles() {
-    allowTiles = false;
-    clearTimeout(tileKickTimer);
-    tileKickTimer = setTimeout(() => {
-      allowTiles = true;
-      scheduleDraw();
-    }, 160);
-  }
 
   function proj(lat, lng, z) {
     const size = TILE * Math.pow(2, z);
@@ -369,10 +360,66 @@
           } catch (e) {}
           continue;
         }
+        // 没有这一级：往上找 1~3 级缓存先垫上，避免缩放时出现黑块
+        let filled = false;
+        for (let lv = z - 1; lv >= Math.max(1, z - 3); lv--) {
+          const p = Math.pow(2, z - lv);
+          const px = Math.floor(X / p);
+          const py = Math.floor(Y / p);
+          const pr = tileCache.get(lv + '/' + px + '/' + py);
+          if (!pr || !pr.ok || !pr.img) continue;
+          const sub = 256 / p;
+          try {
+            ctx.drawImage(
+              pr.img,
+              (X - px * p) * sub,
+              (Y - py * p) * sub,
+              sub,
+              sub,
+              (X - tx) * ts + offX,
+              (Y - ty) * ts + offY,
+              ts,
+              ts,
+            );
+          } catch (e) {}
+          filled = true;
+          break;
+        }
+        // 缩小方向：用下一级（更细）的 4 块缓存拼回来
+        if (!filled) {
+          let got = 0;
+          for (let cy = 0; cy < 2; cy++) {
+            for (let cx = 0; cx < 2; cx++) {
+              const cr = tileCache.get(z + 1 + '/' + (X * 2 + cx) + '/' + (Y * 2 + cy));
+              if (!cr || !cr.ok || !cr.img) continue;
+              try {
+                ctx.drawImage(
+                  cr.img,
+                  0,
+                  0,
+                  256,
+                  256,
+                  (X - tx) * ts + offX + (cx * ts) / 2,
+                  (Y - ty) * ts + offY + (cy * ts) / 2,
+                  ts / 2,
+                  ts / 2,
+                );
+                got += 1;
+              } catch (e) {}
+            }
+          }
+          if (got === 4) filled = true;
+        }
+        if (filled) continue;
         if (rec && rec.loading) continue;
         if (rec && rec.err && Date.now() - rec.ts < 30000) continue;
-        if (!allowTiles) continue;
-        if (newTiles >= MAX_NEW_TILES_PER_DRAW) continue;
+        const nowTs = performance.now();
+        if (nowTs - tileBudgetTs > 300) {
+          tileBudgetTs = nowTs;
+          tileBudget = 12;
+        }
+        if (tileBudget <= 0) continue;
+        tileBudget -= 1;
         newTiles += 1;
         const item = { loading: true, ok: false, err: false, img: null, ts: Date.now() };
         tileCache.set(key, item);
@@ -429,7 +476,6 @@
     if (t < 1) requestAnimationFrame(animateZoom);
     else {
       zoomAnim = null;
-      allowTiles = true;
       scheduleDraw();
     }
   }
@@ -438,7 +484,9 @@
     const from = zoomAnim ? zoomAnim.to : view.zoom;
     if (Math.abs(to - from) < 0.01) return;
     zoomAnim = { from: view.zoom, to, t0: performance.now(), dur: 200 };
-    pauseTiles();
+    // 动画期间就按目标级别预取瓦片，动画结束时基本已经就位
+    tileBudget = 12;
+    tileBudgetTs = performance.now();
     animateZoom();
   }
   function zoomBy(delta) {
@@ -487,13 +535,11 @@
         panBy(-dx, -dy);
         drag.x = e.clientX;
         drag.y = e.clientY;
-        pauseTiles();
       }
     });
     canvas.addEventListener('pointerup', () => {
       const wasDrag = drag && drag.moved;
       drag = null;
-      allowTiles = true;
       scheduleDraw();
       if (!wasDrag && onClick) onClick();
     });
