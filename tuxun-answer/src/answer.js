@@ -186,7 +186,7 @@
       ? `
         <div class="big">${esc(S.country || '未知')}</div>
         <div class="co" id="txans-coords">${S.coords}</div>
-        <canvas id="txans-minimap" class="minimap" data-act="map" title="点这里打开 Google 地图看位置"></canvas>
+        <canvas id="txans-minimap" class="minimap" title="点一下打开大图；滚轮缩放、拖动平移"></canvas>
         <div class="btns">
           <button class="btn" data-act="pin" ${S.busy ? 'disabled' : ''}>📍 打点</button>
           <button class="btn ghost" data-act="copy">复制</button>
@@ -258,11 +258,6 @@
         setNotice('已复制：' + S.country + ' ' + S.coords);
       } catch (err) {
         setNotice('复制失败，手动选吧', true);
-      }
-    } else if (act === 'map') {
-      const m = /(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/.exec(S.coords);
-      if (m) {
-        window.open(`https://www.google.com/maps?q=${m[1]},${m[2]}`, '_blank', 'noopener');
       }
     } else if (act === 'refresh') {
       refresh();
