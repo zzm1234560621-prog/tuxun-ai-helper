@@ -255,6 +255,7 @@
           <button class="btn ghost" data-act="refresh">刷新</button>
           <button class="btn ghost" data-act="diag">诊断</button>
         </div>
+        <button class="btn ghost mt" data-act="centerpin" title="先把图寻地图拖到答案位置（让地图中心对准答案），再点这里">🎯 中心打点（地图中心=答案时用）</button>
         ${S.diagText ? `<pre class="diag">${esc(S.diagText)}</pre>` : ''}
         ${metaHtmlZh() || metaHtml()}
         <div class="kv"><span>自动打点</span><span>${S.settings.autoPin ? '开' : '关'}</span></div>
@@ -352,6 +353,10 @@
       }
     } else if (act === 'refresh') {
       refresh();
+    } else if (act === 'centerpin') {
+      const r = await bridge('pin-center', {}, 5000);
+      if (r && r.ok) setNotice('已在图寻地图中心打点（' + (r.w || '?') + 'x' + (r.h || '?') + ' 画布）');
+      else setNotice('中心打点失败：' + ((r && r.reason) || 'no-canvas'), true);
     } else if (act === 'diag') {
       const d = await bridge('diag', {}, 4000);
       const mi = await bridge('map-info', {}, 4000);

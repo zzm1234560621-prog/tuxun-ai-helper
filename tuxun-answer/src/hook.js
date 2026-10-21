@@ -706,6 +706,61 @@
     return { ok: true, kind: 'tile-click', z, x: Math.round(sx), y: Math.round(sy) };
   }
 
+  function findMapCanvas() {
+    const winArea = window.innerWidth * window.innerHeight;
+    let best = null;
+    let bestMapish = null;
+    for (const c of document.querySelectorAll('canvas')) {
+      let r;
+      try {
+        r = c.getBoundingClientRect();
+      } catch (e) {
+        continue;
+      }
+      if (!r || r.width < 120 || r.height < 80) continue;
+      const area = r.width * r.height;
+      // 判断是否在疑似地图容器里
+      let inMap = false;
+      let p = c.parentElement;
+      for (let i = 0; i < 8 && p; i++) {
+        const cls = p.className && typeof p.className === 'string' ? p.className : '';
+        if (/map/i.test(cls) || /map/i.test(p.id || '')) {
+          inMap = true;
+          break;
+        }
+        p = p.parentElement;
+      }
+      if (inMap) {
+        if (!bestMapish || area > bestMapish.area) bestMapish = { c, r, area };
+        continue;
+      }
+      // 排除疑似全景画布（通常接近全屏）
+      if (area > winArea * 0.75) continue;
+      if (!best || area > best.area) best = { c, r, area };
+    }
+    return bestMapish || best;
+  }
+
+  function pinAtCanvasCenter() {
+    const hit = findMapCanvas();
+    if (!hit) return { ok: false, reason: 'no-canvas' };
+    const r = hit.r;
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    let target = null;
+    try {
+      target = document.elementFromPoint(cx, cy);
+    } catch (e) {}
+    if (!target) target = hit.c;
+    const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window, button: 0 };
+    try {
+      ['mousedown', 'mouseup', 'click'].forEach((t) => target.dispatchEvent(new MouseEvent(t, opts)));
+    } catch (e) {
+      return { ok: false, reason: 'dispatch-fail' };
+    }
+    return { ok: true, kind: 'canvas-center', x: Math.round(cx), y: Math.round(cy), w: Math.round(r.width), h: Math.round(r.height) };
+  }
+
   function placeGuess(lat, lng) {
     // 0) React 状态直写（最可靠，不依赖地图库）
     const byState = placeByReactState(lat, lng);
@@ -981,6 +1036,8 @@
         return diag();
       case 'map-info':
         return mapInfo();
+      case 'pin-center':
+        return pinAtCanvasCenter();
       case 'place-guess':
         return placeGuess(payload && payload.lat, payload && payload.lng);
       case 'clearWs':
@@ -1009,5 +1066,5 @@
   });
 
   // 给内容脚本一个调试入口
-  window.__TXAI_DEBUG__ = { getState, setPov, wsLog, mapInfo, placeGuess, findGuessMap };
+  window.__TXAI_DEBUG__ = { getState, setPov, wsLog, mapInfo, placeGuess, findGuessMap, pinAtCanvasCenter, findMapCanvas };
 })();
