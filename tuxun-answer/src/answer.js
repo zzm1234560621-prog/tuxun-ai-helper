@@ -288,6 +288,7 @@
   let rafPending = false;
   let allowTiles = true;
   let tileKickTimer = 0;
+  let zoomAnim = null;
   const MAX_NEW_TILES_PER_DRAW = 4;
 
   function pauseTiles() {
@@ -296,7 +297,7 @@
     tileKickTimer = setTimeout(() => {
       allowTiles = true;
       scheduleDraw();
-    }, 140);
+    }, 160);
   }
 
   function proj(lat, lng, z) {
@@ -328,6 +329,8 @@
       if (big && big.clientWidth) drawMap(big);
     });
   }
+
+  // 连续缩放：view.zoom 是小数，瓦片取 floor(zoom) 那一级再按 2^fraction 缩放绘制
   function drawMap(canvas) {
     if (!view.ready) return;
     const isBig = canvas.id === 'txans-bigmap';
@@ -340,18 +343,24 @@
     }
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.fillStyle = '#0a1424';
     ctx.fillRect(0, 0, w, h);
-    const z = Math.max(1, Math.min(15, Math.round(view.zoom)));
-    const c = proj(view.lat, view.lng, z);
-    const tx = Math.floor(c.x / TILE);
-    const ty = Math.floor(c.y / TILE);
-    const offX = w / 2 - (c.x - tx * TILE);
-    const offY = h / 2 - (c.y - ty * TILE);
-    const halfC = Math.ceil(w / TILE / 2) + 1;
-    const halfR = Math.ceil(h / TILE / 2) + 1;
+
+    const zf = view.zoom;
+    const z = Math.floor(zf);
+    const ts = TILE * Math.pow(2, zf - z); // 这一级瓦片在屏幕上的像素大小
+    const c = proj(view.lat, view.lng, zf);
+    const tx = Math.floor(c.x / ts);
+    const ty = Math.floor(c.y / ts);
+    const offX = w / 2 - (c.x - tx * ts);
+    const offY = h / 2 - (c.y - ty * ts);
+    const halfC = Math.ceil(w / ts / 2) + 1;
+    const halfR = Math.ceil(h / ts / 2) + 1;
     const maxY = Math.pow(2, z);
     let newTiles = 0;
+
     for (let dy = -halfR; dy <= halfR; dy++) {
       for (let dx = -halfC; dx <= halfC; dx++) {
         const X = tx + dx;
@@ -361,7 +370,7 @@
         const rec = tileCache.get(key);
         if (rec && rec.ok && rec.img) {
           try {
-            ctx.drawImage(rec.img, (X - tx) * TILE + offX, (Y - ty) * TILE + offY, TILE, TILE);
+            ctx.drawImage(rec.img, (X - tx) * ts + offX, (Y - ty) * ts + offY, ts, ts);
           } catch (e) {}
           continue;
         }
@@ -387,8 +396,9 @@
         img.src = tileUrl(z, X, Y);
       }
     }
+
     if (S.pos) {
-      const ap = proj(S.pos.lat, S.pos.lng, z);
+      const ap = proj(S.pos.lat, S.pos.lng, zf);
       const mx = ap.x - c.x + w / 2;
       const my = ap.y - c.y + h / 2;
       if (mx > -20 && my > -20 && mx < w + 20 && my < h + 20) {
@@ -407,16 +417,44 @@
     }
     ctx.fillStyle = '#ffffffaa';
     ctx.font = '10px sans-serif';
-    ctx.fillText('z' + z, 6, h - 6);
+    ctx.fillText('z' + zf.toFixed(1), 6, h - 6);
+  }
+
+  function clampZoom(z) {
+    return Math.max(1, Math.min(16, z));
+  }
+
+  // 官方那种「实时放大」：目标缩放 + 每帧缓动逼近
+  function animateZoom() {
+    if (!zoomAnim) return;
+    const t = Math.min(1, (performance.now() - zoomAnim.t0) / zoomAnim.dur);
+    const e = 1 - Math.pow(1 - t, 3);
+    view.zoom = zoomAnim.from + (zoomAnim.to - zoomAnim.from) * e;
+    scheduleDraw();
+    if (t < 1) requestAnimationFrame(animateZoom);
+    else {
+      zoomAnim = null;
+      allowTiles = true;
+      scheduleDraw();
+    }
+  }
+  function zoomToward(target) {
+    const to = clampZoom(target);
+    const from = zoomAnim ? zoomAnim.to : view.zoom;
+    if (Math.abs(to - from) < 0.01) return;
+    zoomAnim = { from: view.zoom, to, t0: performance.now(), dur: 200 };
+    pauseTiles();
+    animateZoom();
   }
   function zoomBy(delta) {
-    view.zoom = Math.max(1, Math.min(15, Math.round(view.zoom) + delta));
-    scheduleDraw();
+    const base = zoomAnim ? zoomAnim.to : view.zoom;
+    zoomToward(base + delta);
   }
   function panBy(dxPx, dyPx) {
-    const z = Math.max(1, Math.min(15, Math.round(view.zoom)));
-    const c = proj(view.lat, view.lng, z);
-    const np = unproj(c.x - dxPx, c.y - dyPx, z);
+    const zf = view.zoom;
+    const size = TILE * Math.pow(2, zf);
+    const c = proj(view.lat, view.lng, zf);
+    const np = unproj(c.x - dxPx, c.y - dyPx, zf);
     view.lat = np.lat;
     view.lng = np.lng;
     scheduleDraw();
@@ -428,7 +466,8 @@
     view.ready = true;
     view.key = S.coords;
     const A = window.__TX_MAP_ANIM__;
-    view.zoom = A && A.zoomForPoint ? A.zoomForPoint(S.pos.lat, S.pos.lng) : 5;
+    view.zoom = clampZoom((A && A.zoomForPoint ? A.zoomForPoint(S.pos.lat, S.pos.lng) : 5) + 0.2);
+    allowTiles = true;
     scheduleDraw();
   }
   function attachMap(canvas, onClick) {
@@ -436,8 +475,8 @@
     canvas.__txansBound = true;
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      pauseTiles();
-      zoomBy(e.deltaY < 0 ? 1 : -1);
+      const step = Math.max(-1.2, Math.min(1.2, -e.deltaY * 0.0022));
+      zoomBy(step);
     }, { passive: false });
     let drag = null;
     canvas.addEventListener('pointerdown', (e) => {
@@ -450,10 +489,10 @@
       const dy = e.clientY - drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
       if (drag.moved) {
-        pauseTiles();
         panBy(-dx, -dy);
         drag.x = e.clientX;
         drag.y = e.clientY;
+        pauseTiles();
       }
     });
     canvas.addEventListener('pointerup', () => {
@@ -538,14 +577,23 @@
       S.pos = null;
       S.country = '';
       S.coords = '';
-      render();
+      const k0 = 'none';
+      if (k0 !== S.uiKey) {
+        S.uiKey = k0;
+        render();
+      }
       return;
     }
     S.pos = st.position;
     const co = countryAt(S.pos.lat, S.pos.lng);
     S.country = co ? co.z : '未知';
     S.coords = `${S.pos.lat.toFixed(4)}, ${S.pos.lng.toFixed(4)}`;
-    render();
+    // 只在内容变化时重绘，避免轮询导致地图闪烁
+    const uiKey = 'ok|' + S.country + '|' + S.coords;
+    if (uiKey !== S.uiKey) {
+      S.uiKey = uiKey;
+      render();
+    }
 
     // 新的一题 + 自动打点
     if (st.panoId && st.panoId !== S.lastPanoId) {
