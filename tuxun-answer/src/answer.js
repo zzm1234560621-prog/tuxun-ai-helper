@@ -2,7 +2,7 @@
  * 图寻答案助手 —— 独立版
  *
  * 只做一件事：从页面的街景实例里读出当前这条全景的真实坐标（就是这一题的答案），
- * 显示国家和经纬度，并可以一键在图寻的猜点地图上打点。
+ * 只显示国家和经纬度（不再提供打点功能）。
  *
  * 不调用 AI、不发任何网络请求、不需要 Key；跨平台（Edge/Chrome，Windows/macOS 均可）。
  */
@@ -12,7 +12,6 @@
   if (window.top !== window) return; // 只在顶层出界面
 
   const DEFAULTS = {
-    autoPin: true,
     pos: null,
   };
 
@@ -30,7 +29,6 @@
     diagText: '',
     tileFail: false,
     lastPanoId: null,
-    autoPinned: {},
     busy: false,
     enabled: true,
   };
@@ -248,20 +246,14 @@
         <div id="txans-mapdbg" class="muted" style="font-size:10px;margin-top:4px;word-break:break-all"></div>
         ${S.tileFail ? '<div class="hint" style="color:#fca5a5">地图瓦片没加载出来（网络/瓦片源不可用），点「诊断」看详情</div>' : ''}
         <div class="btns">
-          <button class="btn" data-act="pin" ${S.busy ? 'disabled' : ''}>📍 打点</button>
-          <button class="btn ghost" data-act="copy">复制</button>
+          <button class="btn" data-act="copy">复制坐标</button>
         </div>
         <div class="row">
           <button class="btn ghost" data-act="refresh">刷新</button>
           <button class="btn ghost" data-act="diag">诊断</button>
         </div>
-        <button class="btn ghost mt" data-act="centerpin" title="先把图寻地图拖到答案位置（让地图中心对准答案），再点这里">🎯 中心打点（地图中心=答案时用）</button>
         ${S.diagText ? `<pre class="diag">${esc(S.diagText)}</pre>` : ''}
         ${metaHtmlZh() || metaHtml()}
-        <div class="kv"><span>自动打点</span><span>${S.settings.autoPin ? '开' : '关'}</span></div>
-        <div class="row">
-          <button class="btn ghost" data-act="autopin">${S.settings.autoPin ? '关闭自动打点' : '开启自动打点'}</button>
-        </div>
         ${notice}
         <div class="hint">直接读街景对象的真实坐标，不经过 AI。拖动标题可移动。<span class="muted">v${VERSION}</span></div>`
       : `<div class="muted">进入一局游戏、等街景加载后，这里会直接显示答案。</div>${notice}`;
@@ -342,8 +334,6 @@
     if (act === 'collapse') {
       S.collapsed = !S.collapsed;
       render();
-    } else if (act === 'pin') {
-      await placePin(false);
     } else if (act === 'copy') {
       try {
         await navigator.clipboard.writeText(`${S.country} ${S.coords}`);
@@ -353,10 +343,6 @@
       }
     } else if (act === 'refresh') {
       refresh();
-    } else if (act === 'centerpin') {
-      const r = await bridge('pin-center', {}, 5000);
-      if (r && r.ok) setNotice('已在图寻地图中心打点（' + (r.w || '?') + 'x' + (r.h || '?') + ' 画布）');
-      else setNotice('中心打点失败：' + ((r && r.reason) || 'no-canvas'), true);
     } else if (act === 'diag') {
       const d = await bridge('diag', {}, 4000);
       const mi = await bridge('map-info', {}, 4000);
@@ -369,10 +355,6 @@
       try {
         console.log('[图寻答案] 诊断', d, mi);
       } catch (e) {}
-      render();
-    } else if (act === 'autopin') {
-      S.settings.autoPin = !S.settings.autoPin;
-      persist();
       render();
     }
   });
@@ -742,37 +724,6 @@
       ' 判断技巧（Plonk It 原文）</summary><div class="cluebox">' + groups + '</div></details>';
   }
 
-  async function placePin(silent) {
-    if (!S.pos) {
-      if (!silent) setNotice('还没有坐标', true);
-      return false;
-    }
-    S.busy = true;
-    render();
-    const res = await bridge('place-guess', { lat: S.pos.lat, lng: S.pos.lng }, 8000);
-    S.busy = false;
-    if (res && res.ok) {
-      setNotice('已在图寻地图上打点');
-      return true;
-    }
-    if (!silent) setNotice('打点失败（' + ((res && res.error) || 'no-map') + '）：确认已进入游戏、猜点地图已展开', true);
-    render();
-    return false;
-  }
-
-  async function autoPinWithRetry(panoId, attempt) {
-    const n = attempt || 0;
-    if (!S.pos) return;
-    const ok = await placePin(true);
-    if (!ok && n < 5) {
-      setTimeout(() => {
-        if (S.lastPanoId === panoId) autoPinWithRetry(panoId, n + 1);
-      }, 1800);
-    } else if (!ok) {
-      setNotice('自动打点失败：找不到图寻猜点地图或选点接口（可点「诊断」反馈）');
-    }
-  }
-
   async function refresh() {
     S.dbg = S.dbg || { calls: 0, ok: 0, fail: 0, last: '' };
     S.dbg.calls += 1;
@@ -817,18 +768,6 @@
       S.uiKey = uiKey;
       render();
     }
-
-    // 新的一题 + 自动打点
-    if (st.panoId && st.panoId !== S.lastPanoId) {
-      S.lastPanoId = st.panoId;
-      if (S.settings.autoPin && !S.autoPinned[st.panoId]) {
-        S.autoPinned[st.panoId] = true;
-        setTimeout(() => autoPinWithRetry(st.panoId), 500);
-      }
-    } else if (st.panoId && S.settings.autoPin && !S.autoPinned[st.panoId]) {
-      S.autoPinned[st.panoId] = true;
-      setTimeout(() => autoPinWithRetry(st.panoId), 500);
-    }
   }
 
   async function loadAll() {
@@ -837,7 +776,7 @@
       if (store && store.answerSettings) {
         S.settings = Object.assign({}, DEFAULTS, store.answerSettings);
       } else {
-        // 第一次用：写一份默认设置（自动打点开）
+        // 第一次用：写一份默认设置
         await chrome.storage.local.set({ answerSettings: S.settings });
       }
     } catch (e) {}
@@ -858,5 +797,5 @@
   })();
 
   // 调试入口
-  window.__TXANS_DEBUG__ = { state: S, refresh, placePin, bridge };
+  window.__TXANS_DEBUG__ = { state: S, refresh, bridge };
 })();
