@@ -192,7 +192,6 @@
           <button class="btn ghost" data-act="copy">复制</button>
         </div>
         <div class="row">
-          <button class="btn ghost" data-act="map">地图链接</button>
           <button class="btn ghost" data-act="refresh">刷新</button>
           <button class="btn ghost" data-act="diag">诊断</button>
         </div>
@@ -287,6 +286,18 @@
   const view = { lat: 0, lng: 0, zoom: 5, ready: false, key: '' };
   const tileCache = new Map();
   let rafPending = false;
+  let allowTiles = true;
+  let tileKickTimer = 0;
+  const MAX_NEW_TILES_PER_DRAW = 4;
+
+  function pauseTiles() {
+    allowTiles = false;
+    clearTimeout(tileKickTimer);
+    tileKickTimer = setTimeout(() => {
+      allowTiles = true;
+      scheduleDraw();
+    }, 140);
+  }
 
   function proj(lat, lng, z) {
     const size = TILE * Math.pow(2, z);
@@ -319,7 +330,8 @@
   }
   function drawMap(canvas) {
     if (!view.ready) return;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const isBig = canvas.id === 'txans-bigmap';
+    const dpr = Math.min(isBig ? 1.5 : 2, window.devicePixelRatio || 1);
     const w = Math.max(80, canvas.clientWidth || 240);
     const h = Math.max(60, canvas.clientHeight || 150);
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
@@ -339,6 +351,7 @@
     const halfC = Math.ceil(w / TILE / 2) + 1;
     const halfR = Math.ceil(h / TILE / 2) + 1;
     const maxY = Math.pow(2, z);
+    let newTiles = 0;
     for (let dy = -halfR; dy <= halfR; dy++) {
       for (let dx = -halfC; dx <= halfC; dx++) {
         const X = tx + dx;
@@ -354,6 +367,9 @@
         }
         if (rec && rec.loading) continue;
         if (rec && rec.err && Date.now() - rec.ts < 30000) continue;
+        if (!allowTiles) continue;
+        if (newTiles >= MAX_NEW_TILES_PER_DRAW) continue;
+        newTiles += 1;
         const item = { loading: true, ok: false, err: false, img: null, ts: Date.now() };
         tileCache.set(key, item);
         const img = new Image();
@@ -420,6 +436,7 @@
     canvas.__txansBound = true;
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
+      pauseTiles();
       zoomBy(e.deltaY < 0 ? 1 : -1);
     }, { passive: false });
     let drag = null;
@@ -433,6 +450,7 @@
       const dy = e.clientY - drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
       if (drag.moved) {
+        pauseTiles();
         panBy(-dx, -dy);
         drag.x = e.clientX;
         drag.y = e.clientY;
@@ -441,6 +459,8 @@
     canvas.addEventListener('pointerup', () => {
       const wasDrag = drag && drag.moved;
       drag = null;
+      allowTiles = true;
+      scheduleDraw();
       if (!wasDrag && onClick) onClick();
     });
     canvas.addEventListener('pointercancel', () => { drag = null; });
@@ -464,6 +484,7 @@
     const info = modal.querySelector('#txans-mapinfo');
     if (info) info.textContent = (S.country || '') + ' ' + (S.coords || '');
     modal.classList.add('on');
+    allowTiles = true;
     centerOnAnswer();
     const big = shadow.getElementById('txans-bigmap');
     attachMap(big, null);
