@@ -217,6 +217,7 @@
         <div class="big">${esc(S.country || '未知')}</div>
         <div class="co" id="txans-coords">${S.coords}</div>
         <canvas id="txans-minimap" class="minimap" title="点一下打开大图；滚轮缩放、拖动平移"></canvas>
+        <div id="txans-mapdbg" class="muted" style="font-size:10px;margin-top:4px;word-break:break-all"></div>
         ${S.tileFail ? '<div class="hint" style="color:#fca5a5">地图瓦片没加载出来（网络/瓦片源不可用），点「诊断」看详情</div>' : ''}
         <div class="btns">
           <button class="btn" data-act="pin" ${S.busy ? 'disabled' : ''}>📍 打点</button>
@@ -240,14 +241,23 @@
     if (mini && S.pos) {
       attachMap(mini, openBigMap);
       if (!view.ready || view.key !== S.coords) centerOnAnswer();
-      setTimeout(() => {
+      let tries = 0;
+      const kick = () => {
+        tries += 1;
         try {
           drawMap(mini);
-          host.setAttribute('data-map', 'drawn w=' + mini.width + ' h=' + mini.height + ' ok=' + view.ok + ' err=' + view.err + ' z=' + view.zoom.toFixed(1));
         } catch (e) {
           host.setAttribute('data-map', 'err:' + String((e && e.message) || e));
         }
-      }, 20);
+        const dbg = shadow.getElementById('txans-mapdbg');
+        if (dbg) {
+          dbg.textContent =
+            'map ready=' + view.ready + ' z=' + view.zoom.toFixed(1) + ' ok=' + view.ok + ' err=' + view.err +
+            ' anim=' + !!window.__TX_MAP_ANIM__ + ' w=' + mini.width + ' h=' + mini.height;
+        }
+        if (tries < 24) setTimeout(kick, 250);
+      };
+      setTimeout(kick, 30);
     } else {
       host.setAttribute('data-map', 'no-mini pos=' + !!S.pos);
     }
