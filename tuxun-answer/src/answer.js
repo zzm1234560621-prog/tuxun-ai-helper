@@ -749,7 +749,7 @@
       setNotice('已在图寻地图上打点');
       return true;
     }
-    if (!silent) setNotice('没找到图寻的猜点地图：确认已进入游戏、地图已展开', true);
+    if (!silent) setNotice('打点失败（' + ((res && res.error) || 'no-map') + '）：确认已进入游戏、猜点地图已展开', true);
     render();
     return false;
   }
@@ -758,12 +758,12 @@
     const n = attempt || 0;
     if (!S.pos) return;
     const ok = await placePin(true);
-    if (!ok && n < 3) {
+    if (!ok && n < 5) {
       setTimeout(() => {
         if (S.lastPanoId === panoId) autoPinWithRetry(panoId, n + 1);
-      }, 1600);
+      }, 1800);
     } else if (!ok) {
-      setNotice('自动打点失败：图寻猜点地图可能还没展开');
+      setNotice('自动打点失败：找不到图寻猜点地图或选点接口（可点「诊断」反馈）');
     }
   }
 

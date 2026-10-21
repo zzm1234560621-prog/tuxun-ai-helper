@@ -351,8 +351,11 @@
       if (typeof o.getCenter === 'function' && typeof o.setCenter === 'function' && typeof o.getZoom === 'function' && typeof o.setZoom === 'function') {
         return 'google';
       }
-      // 通用兜底：有屏幕投影 + 有设置中心的方法
-      if (typeof o.getCanvas === 'function' && typeof o.getCenter === 'function' && (typeof o.jumpTo === 'function' || typeof o.setView === 'function' || typeof o.setCenter === 'function')) {
+      // 通用兜底：有容器 + 能取中心 + 能移动（不要求知道投影）
+      const hasHost = typeof o.getCanvas === 'function' || typeof o.getContainer === 'function' || typeof o.getDiv === 'function';
+      const hasCenter = typeof o.getCenter === 'function';
+      const hasMove = typeof o.jumpTo === 'function' || typeof o.setView === 'function' || typeof o.setCenter === 'function' || typeof o.centerAndZoom === 'function';
+      if (hasHost && hasCenter && hasMove) {
         return 'generic';
       }
     } catch (e) {}
@@ -451,7 +454,7 @@
 
   function findPickApi() {
     if (state.pickApi) return state.pickApi;
-    const names = /^(setPickCoord|onPickLocation|setPick|onPick|onSelectLocation|selectLocation|onPickCoord|setPickLocation)$/;
+    const names = /^(setPickCoord|onPickLocation|setPick|onPick|onSelectLocation|selectLocation|onPickCoord|setPickLocation|setGuess|onGuess|guessCoord|onMapClick|handleMapClick|onClickMap|setMarker|placeMarker|setTarget|setLocation|setCoord|onSelect|pickLocation|onPickLocationChange)$/;
     const keysOf = (obj) => {
       try {
         return obj ? Object.keys(obj) : [];
@@ -641,20 +644,64 @@
         return { ok: true, kind: 'leaflet', moved: true };
       }
       if (found.kind === 'generic') {
-        // 不知道具体库：先尝试把地图移到目标，再用它自己的 fire('click') 选点
+        const host = (m.getCanvas && m.getCanvas()) || (m.getContainer && m.getContainer()) || (m.getDiv && m.getDiv()) || null;
         try {
           if (typeof m.jumpTo === 'function') m.jumpTo({ center: [lng, lat] });
-          else if (typeof m.setView === 'function') m.setView([lat, lng]);
-          else if (typeof m.setCenter === 'function') m.setCenter({ lat, lng });
+          else if (typeof m.setView === 'function') m.setView([lat, lng], m.getZoom ? m.getZoom() : 5, { animate: false });
+          else if (typeof m.setCenter === 'function') m.setCenter([lng, lat]);
+          else if (typeof m.centerAndZoom === 'function') m.centerAndZoom([lng, lat], m.getZoom ? m.getZoom() : 5);
         } catch (e) {}
-        try {
-          const cv = m.getCanvas ? m.getCanvas() : null;
-          const rect = cv && cv.getBoundingClientRect ? cv.getBoundingClientRect() : { width: window.innerWidth, height: window.innerHeight };
-          const point = { x: Math.round(rect.width / 2), y: Math.round(rect.height / 2) };
-          const ev = { lngLat: { lng, lat }, latlng: { lat, lng }, point, containerPoint: point, originalEvent: null };
-          m.fire('click', ev);
-        } catch (e) {}
+        setTimeout(() => {
+          try {
+            if (host && host.getBoundingClientRect) {
+              const r = host.getBoundingClientRect();
+              const cx = r.left + r.width / 2;
+              const cy = r.top + r.height / 2;
+              const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window, button: 0 };
+              ['mousedown', 'mouseup', 'click'].forEach((t) => host.dispatchEvent(new MouseEvent(t, opts)));
+            }
+            if (typeof m.fire === 'function') {
+              const pt = { x: (host ? host.clientWidth : window.innerWidth) / 2, y: (host ? host.clientHeight : window.innerHeight) / 2 };
+              m.fire('click', { lngLat: { lng, lat }, latlng: { lat, lng }, point: pt, containerPoint: pt });
+            }
+          } catch (e) {}
+        }, 450);
         return { ok: true, kind: 'generic', moved: true };
+      }
+      // 任何带 setCenter/jumpTo/setView/centerAndZoom 的地图：先移过去，再在中心派发真实点击
+      if (found.kind === 'generic' || found.kind === 'google' || found.kind === 'maplibre' || found.kind === 'leaflet') {
+        // 已经在上面的分支处理过；这里只处理「有容器但没投影」的情况
+      }
+      if (found.kind === 'generic') {
+        // 已在上面的 generic 分支处理
+      }
+      {
+        const host = (m.getCanvas && m.getCanvas()) || (m.getContainer && m.getContainer()) || (m.getDiv && m.getDiv()) || null;
+        let moved = false;
+        try {
+          if (typeof m.jumpTo === 'function') { m.jumpTo({ center: [lng, lat] }); moved = true; }
+          else if (typeof m.setView === 'function') { m.setView([lat, lng], m.getZoom ? m.getZoom() : 5, { animate: false }); moved = true; }
+          else if (typeof m.setCenter === 'function') { m.setCenter({ lat, lng }); moved = true; }
+          else if (typeof m.panTo === 'function') { m.panTo([lat, lng]); moved = true; }
+          else if (typeof m.centerAndZoom === 'function') { m.centerAndZoom({ lng, lat }, m.getZoom ? m.getZoom() : 5); moved = true; }
+        } catch (e) {}
+        if (moved && host && host.getBoundingClientRect) {
+          setTimeout(() => {
+            try {
+              const r = host.getBoundingClientRect();
+              const cx = r.left + r.width / 2;
+              const cy = r.top + r.height / 2;
+              const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window, button: 0 };
+              ['mousedown', 'mouseup', 'click'].forEach((t) => {
+                host.dispatchEvent(new MouseEvent(t, opts));
+              });
+              if (typeof m.fire === 'function') {
+                try { m.fire('click', { lngLat: { lng, lat }, latlng: { lat, lng }, point: { x: r.width / 2, y: r.height / 2 } }); } catch (e2) {}
+              }
+            } catch (e3) {}
+          }, 450);
+          return { ok: true, kind: 'center-click', moved: true };
+        }
       }
       if (found.kind === 'google') {
         m.setCenter({ lat, lng });
