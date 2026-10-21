@@ -316,6 +316,20 @@
   const tileCache = new Map();
   let rafPending = false;
   let zoomAnim = null;
+  let retryTimer = 0;
+
+  function ensureRetry() {
+    if (retryTimer) return;
+    retryTimer = setInterval(() => {
+      if (!view.ready) return;
+      if (view.ok > 0) {
+        clearInterval(retryTimer);
+        retryTimer = 0;
+        return;
+      }
+      scheduleDraw();
+    }, 1500);
+  }
   let tileBudget = 12;
   let tileBudgetTs = 0;
 
@@ -501,6 +515,13 @@
         ctx.stroke();
       }
     }
+    if (view.ok === 0) {
+      ctx.fillStyle = '#7d8898aa';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('地图加载中…', w / 2, h / 2 + 4);
+      ctx.textAlign = 'left';
+    }
     ctx.fillStyle = '#ffffffaa';
     ctx.font = '10px sans-serif';
     ctx.fillText('z' + zf.toFixed(1), 6, h - 6);
@@ -555,6 +576,7 @@
     const A = window.__TX_MAP_ANIM__;
     view.zoom = clampZoom((A && A.zoomForPoint ? A.zoomForPoint(S.pos.lat, S.pos.lng) : 5) + 0.2);
     allowTiles = true;
+    ensureRetry();
     scheduleDraw();
   }
   function attachMap(canvas, onClick) {
