@@ -590,7 +590,129 @@
     }
   }
 
+  function mercY(lat) {
+    const l = Math.max(-85.05112878, Math.min(85.05112878, lat)) * (Math.PI / 180);
+    return (1 - Math.log(Math.tan(l) + 1 / Math.cos(l)) / Math.PI) / 2;
+  }
+
+  function reactRoots() {
+    const roots = [];
+    const els = [document.getElementById('root'), document.body, document.documentElement];
+    for (const el of els) {
+      if (!el) continue;
+      try {
+        for (const k of Object.keys(el)) {
+          const v = el[k];
+          if (k.indexOf('__reactContainer$') === 0) roots.push(v);
+          else if (k.indexOf('__reactFiber$') === 0) {
+            let f = v;
+            let n = 0;
+            while (f.return && n < 300) {
+              f = f.return;
+              n += 1;
+            }
+            roots.push(f);
+          }
+        }
+      } catch (e) {}
+    }
+    return roots;
+  }
+
+  // 方法 A：直接从 React 状态里找到「选中坐标」的 state，并 dispatch 新坐标
+  function placeByReactState(lat, lng) {
+    const roots = reactRoots();
+    if (!roots.length) return { ok: false, reason: 'no-react-root' };
+    const hits = [];
+    const queue = roots.slice();
+    const seen = new Set();
+    let n = 0;
+    while (queue.length && n < 30000) {
+      const f = queue.shift();
+      if (!f || seen.has(f)) continue;
+      seen.add(f);
+      n += 1;
+      let hook = f.memoizedState;
+      let hi = 0;
+      while (hook && hi < 80) {
+        let st = null;
+        try {
+          st = hook.memoizedState;
+        } catch (e) {}
+        if (st && typeof st === 'object' && typeof st.lat === 'number' && typeof st.lng === 'number' && Object.keys(st).length <= 6 && hook.queue && typeof hook.queue.dispatch === 'function') {
+          hits.push(hook);
+        }
+        hook = hook.next;
+        hi += 1;
+      }
+      if (f.child) queue.push(f.child);
+      if (f.sibling) queue.push(f.sibling);
+      if (f.return) queue.push(f.return);
+    }
+    hits.sort((a, b) => Object.keys(a.memoizedState).length - Object.keys(b.memoizedState).length);
+    for (const hook of hits) {
+      try {
+        const cur = hook.memoizedState;
+        const next = Object.assign({}, cur, { lat, lng });
+        hook.queue.dispatch(next);
+        return { ok: true, kind: 'react-state', hits: hits.length };
+      } catch (e) {}
+    }
+    return { ok: false, reason: 'no-react-coord', hits: hits.length };
+  }
+
+  // 方法 B：用页面上可见的瓦片 <img> 反推屏幕坐标，再点过去
+  function placeByTiles(lat, lng) {
+    const imgs = Array.from(document.images || []);
+    const parsed = [];
+    for (const im of imgs) {
+      const src = im.src || '';
+      if (!/getTile|maprastertile|dbankcdn/.test(src)) continue;
+      const m = /\/getTile\/[^/]+\/(\d+)\/(\d+)\/(\d+)\//.exec(src);
+      if (!m) continue;
+      let r;
+      try {
+        r = im.getBoundingClientRect();
+      } catch (e) {
+        continue;
+      }
+      if (!r || r.width < 20 || r.height < 20) continue;
+      parsed.push({ z: +m[1], x: +m[2], y: +m[3], r });
+    }
+    if (!parsed.length) return { ok: false, reason: 'no-tile-imgs' };
+    const zc = {};
+    for (const p of parsed) zc[p.z] = (zc[p.z] || 0) + 1;
+    const z = +Object.keys(zc).sort((a, b) => zc[b] - zc[a])[0];
+    const t = parsed.filter((p) => p.z === z)[0];
+    const scale = t.r.width / 256;
+    const worldX = ((lng + 180) / 360) * 256 * Math.pow(2, z);
+    const worldY = mercY(lat) * 256 * Math.pow(2, z);
+    const sx = t.r.left + (worldX - t.x * 256) * scale;
+    const sy = t.r.top + (worldY - t.y * 256) * scale;
+    if (!isFinite(sx) || !isFinite(sy)) return { ok: false, reason: 'bad-proj' };
+    let target = null;
+    try {
+      target = document.elementFromPoint(sx, sy);
+    } catch (e) {}
+    if (!target) return { ok: false, reason: 'no-element' };
+    const tag = (target.tagName || '').toLowerCase();
+    if (tag === 'button' || (target.closest && target.closest('button'))) return { ok: false, reason: 'hit-button' };
+    const opts = { bubbles: true, cancelable: true, clientX: sx, clientY: sy, view: window, button: 0 };
+    try {
+      ['mousedown', 'mouseup', 'click'].forEach((t) => target.dispatchEvent(new MouseEvent(t, opts)));
+    } catch (e) {
+      return { ok: false, reason: 'dispatch-fail' };
+    }
+    return { ok: true, kind: 'tile-click', z, x: Math.round(sx), y: Math.round(sy) };
+  }
+
   function placeGuess(lat, lng) {
+    // 0) React 状态直写（最可靠，不依赖地图库）
+    const byState = placeByReactState(lat, lng);
+    if (byState.ok) return byState;
+    // 1) 用可见瓦片推算屏幕坐标再点击
+    const byTiles = placeByTiles(lat, lng);
+    if (byTiles.ok) return byTiles;
     const found = findGuessMap();
     if (!found) {
       const byApi = placeByPickApi(lat, lng);
@@ -811,6 +933,14 @@
       iframeSrcs: Array.from(document.querySelectorAll('iframe')).slice(0, 5).map((f) => f.src || ''),
       canvases: document.querySelectorAll('canvas').length,
       canvas: cv,
+      reactRoots: (function () { try { return reactRoots().length; } catch (e) { return -1; } })(),
+      tileImgs: (function () {
+        try {
+          return Array.from(document.images || []).filter((im) => /getTile|maprastertile|dbankcdn/.test(im.src || '')).length;
+        } catch (e) {
+          return -1;
+        }
+      })(),
       pickApi: (function () {
         try {
           const p = findPickApi();
