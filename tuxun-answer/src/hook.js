@@ -422,16 +422,37 @@
   }
 
   // 从 React fiber 里直接找街景实例（默认方式：完全不动页面 API）
+  function visiblePano(inst) {
+    try {
+      const d = inst && inst.getDiv && inst.getDiv();
+      if (!d || !document.contains(d)) return false;
+      const r = d.getBoundingClientRect();
+      if (!r || r.width < 200 || r.height < 150) return false;
+      const vh = window.innerHeight;
+      const vw = window.innerWidth;
+      if (r.bottom < 0 || r.right < 0 || r.top > vh || r.left > vw) return false;
+      if (d.offsetParent === null && getComputedStyle(d).position !== 'fixed') return false;
+      const el = document.elementFromPoint(Math.round(vw / 2), Math.round(vh / 2));
+      if (!el) return true;
+      return d === el || d.contains(el) || el.contains(d);
+    } catch (e) {
+      return true;
+    }
+  }
+
   function findPano() {
     if (state.inst) {
       try {
-        const d = state.inst.getDiv && state.inst.getDiv();
-        if (!d || document.contains(d)) return state.inst;
-      } catch (e) {
-        state.inst = null;
-      }
+        if (panoKindOf(state.inst) && visiblePano(state.inst)) return state.inst;
+      } catch (e) {}
+      state.inst = null;
     }
-    let found = scanElements('[class*="viewer"], [class*="pano"], [class*="Pano"], canvas, div', panoKindOf, 3000);
+    let found = scanElements('[class*="viewer"], [class*="pano"], [class*="Pano"], canvas, div', (o) => {
+      const k = panoKindOf(o);
+      if (!k) return null;
+      return visiblePano(o) ? k : null;
+    }, 3000);
+    if (!found) found = scanElements('[class*="viewer"], [class*="pano"], [class*="Pano"], canvas, div', panoKindOf, 3000);
     if (!found) {
       try {
         for (const k of Object.keys(window)) {
@@ -1240,6 +1261,12 @@
 
   function handle(cmd, payload) {
     switch (cmd) {
+      case 'rescan':
+        state.inst = null;
+        state.el = null;
+        mapState.map = null;
+        state.pickApi = null;
+        return { ok: true, pano: !!findPano() };
       case 'state':
         return getState();
       case 'setPov':

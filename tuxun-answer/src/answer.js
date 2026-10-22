@@ -724,6 +724,7 @@
       ' 判断技巧（Plonk It 原文）</summary><div class="cluebox">' + groups + '</div></details>';
   }
 
+  let rescanTimer = null;
   async function refresh() {
     S.dbg = S.dbg || { calls: 0, ok: 0, fail: 0, last: '' };
     S.dbg.calls += 1;
@@ -754,6 +755,19 @@
         }
       }
       return;
+    }
+    // 换图时旧街景实例可能残留在页面里：坐标长时间没变就强制重新找一次
+    if (S.pos && st.position && Math.abs(S.pos.lat - st.position.lat) < 1e-6 && Math.abs(S.pos.lng - st.position.lng) < 1e-6) {
+      S.sameCount = (S.sameCount || 0) + 1;
+      if (S.sameCount > 15 && !rescanTimer) {
+        S.sameCount = 0;
+        rescanTimer = setTimeout(async () => {
+          rescanTimer = null;
+          try { await bridge('rescan', {}, 3000); } catch (e) {}
+        }, 1000);
+      }
+    } else {
+      S.sameCount = 0;
     }
     S.pos = st.position;
     const co = countryAt(S.pos.lat, S.pos.lng);
